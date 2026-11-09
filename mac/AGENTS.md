@@ -4,11 +4,16 @@ Read the repo's [AGENTS.md](../AGENTS.md) first: its product principles and hard
 no new runtime dependencies, never log typed text or screen content, secure redaction stays content-independent,
 product decisions go to the owner). This file covers what's specific to `mac/`.
 
+**Features land in both apps.** A new feature or behaviour change made here also goes into the Windows app
+(`src/Snip`), and vice versa; if one side can't be done in the same PR, record the gap in the
+[feature parity table](../AGENTS.md#feature-parity). Shared algorithms (`SnipCore` geometry and redaction) must stay
+equivalent to their Windows counterparts, tests included.
+
 ## Status
 
-First attempt, written without access to a Mac: it compiles and `SnipCore` passes its unit tests on GitHub Actions
-(`.github/workflows/mac.yml`, Apple silicon `macos-latest` runner), but **no UI has been exercised yet**. Expect bugs in the
-overlay, coordinates on multi-display or mixed-scale setups, the hotkey and permissions. Fix them here.
+Experimental: it builds, `SnipCore` passes its unit tests on GitHub Actions (`.github/workflows/mac.yml`, Apple
+silicon `macos-latest` runner), and the app has been used on a real Apple silicon Mac. Less exercised: multi-display
+and mixed-scale setups. Fix what you find here.
 
 ## Layout
 
