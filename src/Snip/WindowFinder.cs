@@ -8,12 +8,16 @@ internal static class WindowFinder
     public static List<Rectangle> VisibleWindows(Rectangle virtualScreen)
     {
         var result = new List<Rectangle>();
+        var self = (uint)Environment.ProcessId;
         EnumWindows((hwnd, _) =>
         {
             if (!IsWindowVisible(hwnd) || IsIconic(hwnd)) return true;
+            if (GetWindowThreadProcessId(hwnd, out uint pid) != 0 && pid == self) return true;
             if (DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, out int cloaked, sizeof(int)) == 0 && cloaked != 0) return true;
-            var ex = (long)GetWindowLongPtr(hwnd, GWL_EXSTYLE);
+            var ex = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
             if ((ex & WS_EX_TOOLWINDOW) != 0 && (ex & WS_EX_NOACTIVATE) != 0) return true;
+            // Click-through overlays (screen-share borders, GPU/FPS overlays) would otherwise swallow every click.
+            if ((ex & WS_EX_TRANSPARENT) != 0) return true;
 
             Rectangle r;
             if (DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, out RECT rect, System.Runtime.InteropServices.Marshal.SizeOf<RECT>()) == 0)

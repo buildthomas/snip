@@ -24,6 +24,7 @@ internal sealed class OverlayForm : Form
     private Point _dragStart;
     private Rectangle _dragOrigSel;
     private int _resizeHandle;
+    private Rectangle? _selectionBeforeDrag;
 
     private readonly List<Annotation> _annotations = new();
     private readonly Stack<Annotation> _redo = new();
@@ -102,7 +103,8 @@ internal sealed class OverlayForm : Form
         var fg = GetForegroundWindow();
         var fgThread = GetWindowThreadProcessId(fg, IntPtr.Zero);
         var me = GetCurrentThreadId();
-        var attached = fgThread != 0 && fgThread != me && AttachThreadInput(me, fgThread, true);
+        // Attaching to a hung app's input queue could stall this window too.
+        var attached = fgThread != 0 && fgThread != me && !IsHungAppWindow(fg) && AttachThreadInput(me, fgThread, true);
         SetForegroundWindow(Handle);
         Activate();
         if (attached) AttachThreadInput(me, fgThread, false);
@@ -501,6 +503,7 @@ internal sealed class OverlayForm : Form
             }
             if (_tool != Tool.None) return;
         }
+        _selectionBeforeDrag = _selection;
         _drag = Drag.Pending;
     }
 
@@ -628,6 +631,13 @@ internal sealed class OverlayForm : Form
             _current = null;
         }
         else if (_drag is Drag.Move or Drag.Resize) SetSelection(_dragOrigSel);
+        else if (_drag == Drag.NewSelection)
+        {
+            var dragged = _selection;
+            _selection = _selectionBeforeDrag;
+            if (dragged is Rectangle d) Invalidate(Rectangle.Inflate(d, 2, 2));
+            if (_selection is Rectangle s) Invalidate(Rectangle.Inflate(s, 2, 2));
+        }
         _drag = Drag.None;
         InvalidateChrome();
     }
@@ -848,18 +858,28 @@ internal sealed class OverlayForm : Form
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
     {
         var key = keyData & Keys.KeyCode;
-        var ctrl = (keyData & Keys.Control) != 0;
-        var shift = (keyData & Keys.Shift) != 0;
         var alt = (keyData & Keys.Alt) != 0;
+        // AltGr arrives as Ctrl+Alt (ś, ż, ć...), so a shortcut needs Ctrl without Alt.
+        var ctrl = (keyData & Keys.Control) != 0 && !alt;
+        var shift = (keyData & Keys.Shift) != 0;
 
         if (_editing != null)
         {
             if (ctrl && key == Keys.C) { CommitText(); Copy(); return true; }
             if (ctrl && key == Keys.S) { CommitText(); SaveAs(); return true; }
-            if (ctrl && key == Keys.Z) { Undo(); return true; }
+            if (ctrl && key == Keys.Z)
+            {
+                if (_editing.Text.Length == 0) Undo();
+                else SetEditingText(TrimWord(_editing.Text));
+                return true;
+            }
             if (ctrl && key == Keys.V)
             {
-                if (Clipboard.ContainsText()) AppendText(Clipboard.GetText().Replace("\r\n", "\n").Replace('\r', '\n'));
+                if (Clipboard.ContainsText())
+                {
+                    var text = Clipboard.GetText().Replace("\r\n", "\n").Replace('\r', '\n');
+                    AppendText(text.Length > MaxPaste ? text[..MaxPaste] : text);
+                }
                 return true;
             }
             if (key == Keys.Escape || key == Keys.Enter && !shift) { CommitText(); return true; }
@@ -867,11 +887,7 @@ internal sealed class OverlayForm : Form
             if (key == Keys.Back)
             {
                 if (_editing.Text.Length > 0)
-                {
-                    var before = _editing.Bounds;
-                    _editing.Text = ctrl ? TrimWord(_editing.Text) : _editing.Text[..^1];
-                    InvalidateF(before);
-                }
+                    SetEditingText(ctrl ? TrimWord(_editing.Text) : RemoveLastCharacter(_editing.Text));
                 return true;
             }
             return base.ProcessCmdKey(ref msg, keyData);
@@ -914,7 +930,12 @@ internal sealed class OverlayForm : Form
             {
                 var r = sel;
                 if (shift) { r.Width = Math.Max(2, r.Width + dx); r.Height = Math.Max(2, r.Height + dy); }
-                else r.Offset(dx, dy);
+                else
+                {
+                    // Clamp like a mouse move; otherwise the edge intersect shrinks the selection.
+                    r.X = Math.Clamp(r.X + dx, 0, Math.Max(0, ClientSize.Width - r.Width));
+                    r.Y = Math.Clamp(r.Y + dy, 0, Math.Max(0, ClientSize.Height - r.Height));
+                }
                 SetSelection(r);
                 return true;
             }
@@ -932,12 +953,30 @@ internal sealed class OverlayForm : Form
         }
     }
 
+    private const int MaxPaste = 2000, MaxNoteLength = 5000;
+
     private void AppendText(string s)
     {
         if (_editing == null) return;
+        var room = MaxNoteLength - _editing.Text.Length;
+        if (room <= 0) return;
+        SetEditingText(_editing.Text + (s.Length > room ? s[..room] : s));
+    }
+
+    private void SetEditingText(string text)
+    {
+        if (_editing == null) return;
         var before = _editing.Bounds;
-        _editing.Text += s;
+        _editing.Text = text;
         InvalidateF(RectangleF.Union(before, _editing.Bounds));
+    }
+
+    // Removes one user-visible character, so emoji and other surrogate pairs aren't split.
+    internal static string RemoveLastCharacter(string s)
+    {
+        if (s.Length == 0) return s;
+        var starts = System.Globalization.StringInfo.ParseCombiningCharacters(s);
+        return s[..starts[^1]];
     }
 
     internal static string TrimWord(string s)
@@ -957,7 +996,17 @@ internal sealed class OverlayForm : Form
     {
         using var img = Compose();
         if (img == null) return;
-        ClipboardWriter.SetImage(img);
+        try
+        {
+            ClipboardWriter.SetImage(img);
+        }
+        catch (Exception ex)
+        {
+            Log.Write($"copy failed: {ex}");
+            MessageBox.Show(this, $"Couldn't copy to the clipboard. Another app may be holding it.\n\n{ex.Message}",
+                "Snip", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
         Close();
     }
 
@@ -966,7 +1015,7 @@ internal sealed class OverlayForm : Form
         using var img = Compose();
         if (img == null) return;
         var dir = _settings.LastSaveDirectory;
-        if (string.IsNullOrEmpty(dir) || !System.IO.Directory.Exists(dir))
+        if (string.IsNullOrEmpty(dir) || !DirectoryExistsQuickly(dir))
             dir = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
 
         using var dlg = new SaveFileDialog
@@ -981,9 +1030,25 @@ internal sealed class OverlayForm : Form
         };
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
 
-        ImageSaver.Save(img, dlg.FileName);
+        try
+        {
+            ImageSaver.Save(img, dlg.FileName);
+        }
+        catch (Exception ex)
+        {
+            Log.Write($"save failed: {ex}");
+            MessageBox.Show(this, $"Couldn't save {dlg.FileName}.\n\n{ex.Message}", "Snip", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
         _settings.LastSaveDirectory = Path.GetDirectoryName(dlg.FileName);
         Close();
+    }
+
+    // An offline network share can block Directory.Exists for tens of seconds; give up after a moment.
+    private static bool DirectoryExistsQuickly(string dir)
+    {
+        var check = Task.Run(() => System.IO.Directory.Exists(dir));
+        return check.Wait(TimeSpan.FromMilliseconds(400)) && check.Result;
     }
 
     protected override void Dispose(bool disposing)

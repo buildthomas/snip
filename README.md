@@ -46,16 +46,19 @@ Needs the [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet
 powershell -ExecutionPolicy Bypass -File tools\install.ps1
 ```
 
-This builds `Snip.exe` (~400 KB), copies it to `%LOCALAPPDATA%\Programs\Snip` and starts it. On launch it registers
-itself under `HKCU\...\Run` (your user only, no admin). `tools\uninstall.ps1` removes everything.
+This builds `Snip.exe` (~400 KB), copies it to `%LOCALAPPDATA%\Programs\Snip` and starts it. The installed copy
+registers itself under `HKCU\...\Run` (your user only, no admin); copies run from anywhere else never touch
+autostart. `tools\uninstall.ps1` removes everything.
 
 ## Privacy and footprint
 
 - No network code at all. Images only go to the clipboard or to a file you pick.
 - Settings live in `%APPDATA%\Snip\settings.json` (last save folder, color, size, toggles). Nothing else is stored.
-- Idle: 0% CPU, about 10 MB working set, no timers or polling. The keyboard hook runs on its own thread and only
-  checks a few key states per keystroke, so typing elsewhere is never delayed. Capture buffers are released as soon
-  as the overlay closes.
+- Idle: 0% CPU, about 10–20 MB private memory, no timers or polling. The keyboard hook runs on its own thread and
+  only checks a few key states per keystroke, so typing elsewhere is never delayed. Capture buffers are released as
+  soon as the overlay closes. The working set is not force-trimmed, so the hook never has to page back in mid-keystroke
+  (Windows drops hooks that respond too slowly); Snip also re-arms the hook after unlock, resume and every capture.
+- System DLLs are only loaded from System32, so a planted DLL next to `Snip.exe` is ignored.
 - Win+Shift+S is taken over with a low-level keyboard hook (the shell owns that combo, so a normal hotkey can't
   claim it). The key is swallowed and the Start menu is suppressed; all other keys pass through untouched.
 

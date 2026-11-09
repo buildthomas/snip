@@ -57,6 +57,14 @@ public class GeometryTests
     public void TrimWord_RemovesLastWord(string input, string expected) =>
         Assert.Equal(expected, OverlayForm.TrimWord(input));
 
+    [Theory]
+    [InlineData("abc", "ab")]
+    [InlineData("hi 👍", "hi ")]
+    [InlineData("é", "")]
+    [InlineData("", "")]
+    public void RemoveLastCharacter_KeepsSurrogatePairsAndCombiningMarksWhole(string input, string expected) =>
+        Assert.Equal(expected, OverlayForm.RemoveLastCharacter(input));
+
     [Fact]
     public void WindowHit_ReturnsTopmostContainingRect()
     {

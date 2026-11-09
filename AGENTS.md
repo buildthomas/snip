@@ -16,8 +16,9 @@ Snip is a Windows tray app (C#, .NET 10, WinForms). See README.md for features a
 
 ## Cleaning up after test runs
 
-- A Release build re-registers `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\Snip` to wherever it ran from.
-  Afterwards run `tools\install.ps1` so it points at `%LOCALAPPDATA%\Programs\Snip\Snip.exe` again.
+- Only the installed copy (`%LOCALAPPDATA%\Programs\Snip`) writes the `HKCU\...\Run\Snip` entry; test builds don't.
+  E2E runs do kill the installed Snip, so run `tools\install.ps1` afterwards to start it again.
+- Hotkey logic lives in `HotkeyFilter` (pure, unit tested); `KeyboardHook` only feeds it. Keep it that way.
 - `Scenarios.ps1` changes `LastSaveDirectory` in `%APPDATA%\Snip\settings.json`; reset it to `null`. Delete
   `snip.log` if tracing (`SNIP_TRACE=1`) was on.
 

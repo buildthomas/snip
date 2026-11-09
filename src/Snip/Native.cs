@@ -1,5 +1,8 @@
 using System.Runtime.InteropServices;
 
+// Resolve every P/Invoke DLL from System32 only, so a planted dwmapi.dll etc. next to Snip.exe is never loaded.
+[assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+
 namespace Snip;
 
 internal static class Native
@@ -38,6 +41,10 @@ internal static class Native
     public const int GWL_EXSTYLE = -20;
     public const long WS_EX_TOOLWINDOW = 0x00000080;
     public const long WS_EX_NOACTIVATE = 0x08000000;
+    public const long WS_EX_TRANSPARENT = 0x00000020;
+
+    // Marks the keystrokes Snip injects, so other hooks can tell them apart from real input.
+    public static readonly IntPtr SnipInputTag = (IntPtr)0x534E4950; // "SNIP"
 
     public delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
     public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
@@ -69,15 +76,20 @@ internal static class Native
         public IntPtr dwExtraInfo;
     }
 
-    // Sized to the largest INPUT union member (MOUSEINPUT) so Marshal.SizeOf matches the native struct.
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MOUSEINPUT
+    {
+        public int dx, dy;
+        public uint mouseData, dwFlags, time;
+        public IntPtr dwExtraInfo;
+    }
+
+    // Holds the largest member (MOUSEINPUT) so the size matches the native union on both x86 and x64.
     [StructLayout(LayoutKind.Explicit)]
     public struct InputUnion
     {
         [FieldOffset(0)] public KEYBDINPUT ki;
-        [FieldOffset(0)] private readonly long _pad0;
-        [FieldOffset(8)] private readonly long _pad1;
-        [FieldOffset(16)] private readonly long _pad2;
-        [FieldOffset(24)] private readonly long _pad3;
+        [FieldOffset(0)] public MOUSEINPUT mi;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -161,7 +173,17 @@ internal static class Native
     public static extern bool IsIconic(IntPtr hWnd);
 
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
-    public static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+    private static extern IntPtr GetWindowLongPtr64(IntPtr hWnd, int nIndex);
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongW")]
+    private static extern int GetWindowLong32(IntPtr hWnd, int nIndex);
+
+    // GetWindowLongPtrW only exists in 64-bit user32.
+    public static long GetWindowLongPtr(IntPtr hWnd, int nIndex) =>
+        IntPtr.Size == 8 ? (long)GetWindowLongPtr64(hWnd, nIndex) : GetWindowLong32(hWnd, nIndex);
+
+    [DllImport("user32.dll")]
+    public static extern bool IsHungAppWindow(IntPtr hWnd);
 
     [DllImport("user32.dll")]
     public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
@@ -207,6 +229,9 @@ internal static class Native
     public static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr processId);
 
     [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+    [DllImport("user32.dll")]
     public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
 
     [StructLayout(LayoutKind.Sequential)]
@@ -225,7 +250,4 @@ internal static class Native
 
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool SetProcessInformation(IntPtr hProcess, int infoClass, ref PROCESS_POWER_THROTTLING_STATE info, int size);
-
-    [DllImport("psapi.dll")]
-    public static extern bool EmptyWorkingSet(IntPtr hProcess);
 }

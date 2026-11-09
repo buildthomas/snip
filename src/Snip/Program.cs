@@ -8,16 +8,31 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
-        using var mutex = new Mutex(true, MutexName, out var first);
-        if (!first)
+        EventWaitHandle captureSignal;
+        Mutex mutex;
+        bool first;
+        try
         {
-            // A second launch (double-click, shortcut, `Snip.exe --capture`) asks the running instance to capture.
-            if (EventWaitHandle.TryOpenExisting(CaptureEventName, out var signal))
-                using (signal) signal.Set();
+            // The event exists before the mutex, so a second launch can always find it.
+            captureSignal = new EventWaitHandle(false, EventResetMode.AutoReset, CaptureEventName);
+            mutex = new Mutex(true, MutexName, out first);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            MessageBox.Show("Snip is already running as administrator. Exit that copy from its tray icon first.",
+                "Snip", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
-        using var captureSignal = new EventWaitHandle(false, EventResetMode.AutoReset, CaptureEventName);
+        using var _ = mutex;
+        using var signal = captureSignal;
+        if (!first)
+        {
+            // A second launch (double-click, shortcut, `Snip.exe --capture`) asks the running instance to capture.
+            signal.Set();
+            return;
+        }
+
         DisableEfficiencyThrottling();
         ApplicationConfiguration.Initialize();
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);

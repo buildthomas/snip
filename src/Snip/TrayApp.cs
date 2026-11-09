@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Microsoft.Win32;
 
 namespace Snip;
 
@@ -21,9 +22,12 @@ internal sealed class TrayApp : ApplicationContext
         _ui = SynchronizationContext.Current!;
 
 #if !DEBUG
-        // Re-applied every launch so the Run entry follows the exe if it moves.
-        try { Startup.Set(_settings.StartWithWindows); }
-        catch (Exception ex) { Log.Write($"startup registration failed: {ex.Message}"); }
+        // Only the installed copy claims autostart; a copy run from Downloads or a build folder never does.
+        if (Startup.IsInstalledCopy)
+        {
+            try { Startup.Set(_settings.StartWithWindows); }
+            catch (Exception ex) { Log.Write($"startup registration failed: {ex.Message}"); }
+        }
 #endif
 
         _icon = LoadIcon();
@@ -49,7 +53,21 @@ internal sealed class TrayApp : ApplicationContext
         _hook = new KeyboardHook(Capture) { PrintScreenEnabled = _settings.PrintScreenEnabled };
         _signalWait = ThreadPool.RegisterWaitForSingleObject(captureSignal, (_, _) => _ui.Post(_ => Capture(), null), null, -1, false);
 
+        SystemEvents.SessionSwitch += OnSessionSwitch;
+        SystemEvents.PowerModeChanged += OnPowerModeChanged;
+
         if (captureNow) _ui.Post(_ => Capture(), null);
+    }
+
+    private void OnSessionSwitch(object? sender, SessionSwitchEventArgs e)
+    {
+        if (e.Reason is SessionSwitchReason.SessionUnlock or SessionSwitchReason.ConsoleConnect or SessionSwitchReason.RemoteConnect)
+            _hook.Reinstall();
+    }
+
+    private void OnPowerModeChanged(object? sender, PowerModeChangedEventArgs e)
+    {
+        if (e.Mode == PowerModes.Resume) _hook.Reinstall();
     }
 
     private static Icon LoadIcon()
@@ -70,14 +88,25 @@ internal sealed class TrayApp : ApplicationContext
         // Grab pixels first, before any window of ours appears, so menus and hover states are preserved.
         var sw = Stopwatch.StartNew();
         var previousForeground = Native.GetForegroundWindow();
-        var bmp = ScreenCapture.CaptureVirtualScreen(out var bounds);
-        var tCapture = sw.ElapsedMilliseconds;
-        Log.Trace($"blit {ScreenCapture.LastBlitMs} ms");
-        var windows = WindowFinder.VisibleWindows(bounds);
-        var tWindows = sw.ElapsedMilliseconds;
-
-        _overlay = new OverlayForm(bmp, bounds, windows, _settings);
-        var tForm = sw.ElapsedMilliseconds;
+        Bitmap? bmp = null;
+        long tCapture, tWindows, tForm;
+        try
+        {
+            bmp = ScreenCapture.CaptureVirtualScreen(out var bounds);
+            tCapture = sw.ElapsedMilliseconds;
+            Log.Trace($"blit {ScreenCapture.LastBlitMs} ms");
+            var windows = WindowFinder.VisibleWindows(bounds);
+            tWindows = sw.ElapsedMilliseconds;
+            _overlay = new OverlayForm(bmp, bounds, windows, _settings);
+            tForm = sw.ElapsedMilliseconds;
+        }
+        catch (Exception ex)
+        {
+            bmp?.Dispose();
+            Log.Write($"capture failed: {ex}");
+            _tray.ShowBalloonTip(4000, "Snip", $"Capture failed: {ex.Message}", ToolTipIcon.Warning);
+            return;
+        }
         _overlay.Shown += (_, _) => Log.Trace($"overlay shown: capture {tCapture} ms, windows {tWindows} ms, form {tForm} ms, shown {sw.ElapsedMilliseconds} ms");
         _overlay.FormClosed += (_, e) =>
         {
@@ -86,10 +115,11 @@ internal sealed class TrayApp : ApplicationContext
             _overlay = null;
             _settings.Save();
             if (previousForeground != IntPtr.Zero) Native.SetForegroundWindow(previousForeground);
-            // Give back the capture-sized buffers right away so the idle footprint stays small.
+            // Give back capture-sized buffers right away. The working set is deliberately not trimmed:
+            // paging the hook's code back in on the next keystroke risks Windows dropping the hook.
             GC.Collect();
             GC.WaitForPendingFinalizers();
-            Native.EmptyWorkingSet(Process.GetCurrentProcess().Handle);
+            _hook.Reinstall();
         };
         _overlay.Show();
     }
@@ -122,6 +152,8 @@ internal sealed class TrayApp : ApplicationContext
     {
         if (disposing)
         {
+            SystemEvents.SessionSwitch -= OnSessionSwitch;
+            SystemEvents.PowerModeChanged -= OnPowerModeChanged;
             _signalWait.Unregister(null);
             _hook.Dispose();
             _tray.Visible = false;

@@ -25,12 +25,15 @@ internal static class ScreenCapture
             if (ddb == IntPtr.Zero) throw new InvalidOperationException("CreateCompatibleBitmap failed");
             var old = SelectObject(mem, ddb);
             var t = System.Diagnostics.Stopwatch.StartNew();
-            BitBlt(mem, 0, 0, w, h, screen, bounds.X, bounds.Y, SRCCOPY);
+            var ok = BitBlt(mem, 0, 0, w, h, screen, bounds.X, bounds.Y, SRCCOPY);
             LastBlitMs = t.ElapsedMilliseconds;
             SelectObject(mem, old);
+            // Fails e.g. on the secure desktop or a disconnected remote session; better than a black overlay.
+            if (!ok) throw new InvalidOperationException("Could not read the screen (BitBlt failed).");
 
             var bmp = new Bitmap(w, h, PixelFormat.Format32bppPArgb);
             var data = bmp.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.WriteOnly, PixelFormat.Format32bppPArgb);
+            var success = false;
             try
             {
                 var bmi = new BITMAPINFOHEADER { biSize = sizeof(BITMAPINFOHEADER), biWidth = w, biHeight = -h, biPlanes = 1, biBitCount = 32 };
@@ -43,10 +46,12 @@ internal static class ScreenCapture
                     var d = (uint*)(dst + (long)y * stride);
                     for (int x = 0; x < w; x++) d[x] |= 0xFF000000;
                 });
+                success = true;
             }
             finally
             {
                 bmp.UnlockBits(data);
+                if (!success) bmp.Dispose();
             }
             return bmp;
         }

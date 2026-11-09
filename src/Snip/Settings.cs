@@ -33,7 +33,10 @@ internal sealed class Settings
         try
         {
             System.IO.Directory.CreateDirectory(Directory);
-            File.WriteAllText(FilePath, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
+            // Write-then-rename so a crash mid-save can't leave a truncated file behind.
+            var temp = FilePath + ".tmp";
+            File.WriteAllText(temp, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
+            File.Move(temp, FilePath, overwrite: true);
         }
         catch (Exception)
         {
@@ -47,6 +50,12 @@ internal static class Startup
     private const string ValueName = "Snip";
 
     private static string Command => $"\"{Environment.ProcessPath}\"";
+
+    public static string InstallDirectory =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Snip");
+
+    public static bool IsInstalledCopy =>
+        string.Equals(Path.GetDirectoryName(Environment.ProcessPath), InstallDirectory, StringComparison.OrdinalIgnoreCase);
 
     public static bool IsEnabled
     {
