@@ -5,12 +5,12 @@
 <h1 align="center">Snip</h1>
 
 <p align="center">
-  <b>Screenshot and annotate on Windows. Private, instant, tiny.</b><br>
-  Win+Shift+S or PrtSc &middot; no network access &middot; ~400 KB &middot; 0% CPU when idle
+  <b>Screenshot and annotate on Windows. Offline, instant, tiny.</b><br>
+  Win+Shift+S or PrtSc &middot; no network access &middot; ~0.5 MB &middot; 0% CPU when idle &middot; Windows 10 and 11
 </p>
 
-A trustworthy replacement for Lightshot. It runs in the tray, never touches the network, and the whole thing is a
-few hundred lines of C# you can read.
+A trustworthy replacement for Lightshot. It runs in the tray, never touches the network, and the whole thing is
+about 3,000 lines of C# you can read.
 
 ![Snip overlay with a selection, annotations and the toolbars](docs/screenshot.png)
 
@@ -27,6 +27,8 @@ menus, tooltips and hover states stay in the picture.
   remembered.
 - **Ctrl+C** / **Enter**: copy to clipboard and close. **Ctrl+S**: save as (PNG/JPG/BMP), the dialog opens in the last folder you saved to.
 - **Esc** or right-click: cancel. **Ctrl+Z / Ctrl+Y**: undo / redo.
+- Tray icon: left-click captures; the menu has capture, use PrintScreen key (on/off), start with Windows (on/off),
+  open settings folder and exit.
 
 | Tool | Key | | Tool | Key |
 |---|---|---|---|---|
@@ -59,17 +61,16 @@ The redact bar appears next to the tool: **Brush · Box | Black · Pixelate · B
 
 Every redaction is flattened into the copied or saved image; there is no hidden layer to remove.
 
-Tray menu: capture, use PrintScreen key (on/off), start with Windows (on/off), open settings folder, exit.
-
 ## Install
 
-Needs the [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0) (x64) and, to build, the .NET 10 SDK.
+Windows 10 or 11 (x64). Installing from source needs the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0),
+which includes the Desktop Runtime that Snip runs on.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\install.ps1
 ```
 
-This builds `Snip.exe` (~400 KB), copies it to `%LOCALAPPDATA%\Programs\Snip` and starts it. The installed copy
+This builds `Snip.exe` (~0.5 MB), copies it to `%LOCALAPPDATA%\Programs\Snip` and starts it. The installed copy
 registers itself under `HKCU\...\Run` (your user only, no admin); copies run from anywhere else never touch
 autostart. `tools\uninstall.ps1` removes everything.
 
@@ -78,7 +79,8 @@ autostart. `tools\uninstall.ps1` removes everything.
 - No network code at all. Images only go to the clipboard or to a file you pick.
 - Settings live in `%APPDATA%\Snip\settings.json` (last save folder, color, size, tool options, toggles). Nothing
   else is stored.
-- Idle: 0% CPU, about 10–20 MB private memory, no timers or polling. The keyboard hook runs on its own thread and
+- Idle: 0% CPU and no timers or polling. About 10 MB of private memory after start, up to about 40 MB once
+  captures have loaded fonts, emoji and code; Windows reclaims what it needs. The keyboard hook runs on its own thread and
   only checks a few key states per keystroke, so typing elsewhere is never delayed. Capture buffers are released as
   soon as the overlay closes. The working set is not force-trimmed, so the hook never has to page back in mid-keystroke
   (Windows drops hooks that respond too slowly); Snip also re-arms the hook after unlock, resume and every capture.
@@ -91,7 +93,7 @@ autostart. `tools\uninstall.ps1` removes everything.
 - While an app running **as administrator** has focus, Windows doesn't deliver its keystrokes to Snip (UIPI), so the
   hotkey falls through to Windows' own snipping tool. Run Snip elevated if you need that.
 - DRM-protected video shows up black, as with every screenshot tool.
-- PrtSc is the most reliable key for capturing open menus: pressing Win can close some menus before Snip sees the S.
+- Some apps close their open menu as soon as Win is pressed. If a menu disappears with Win+Shift+S, use PrtSc.
 
 ## Development
 
@@ -113,6 +115,12 @@ dotnet run --project tools/IconGen -- ico scissors-sideways-purple src/Snip/snip
 dotnet run --project tools/IconGen -- png scissors-sideways-purple 256 docs/logo.png
 dotnet run --project tools/IconGen -- preview-scissors sheet.png      # compare shapes and colours
 ```
+
+## Contributing
+
+Read [AGENTS.md](AGENTS.md) (principles, hard rules and the PR review checklist) and
+[docs/architecture.md](docs/architecture.md) (how capture, hotkeys, rendering and redaction work) first. Product
+changes are discussed before they're built.
 
 ## License
 

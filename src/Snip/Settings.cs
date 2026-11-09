@@ -26,9 +26,10 @@ internal sealed class Settings
             if (File.Exists(FilePath))
                 return JsonSerializer.Deserialize<Settings>(File.ReadAllText(FilePath)) ?? new Settings();
         }
-        catch (Exception)
+        catch (Exception ex)
         {
             // Corrupt settings fall back to defaults rather than blocking startup.
+            Log.Write($"settings load failed, using defaults: {ex.Message}");
         }
         return new Settings();
     }
@@ -43,8 +44,9 @@ internal sealed class Settings
             File.WriteAllText(temp, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
             File.Move(temp, FilePath, overwrite: true);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            Log.Write($"settings save failed: {ex.Message}");
         }
     }
 }
