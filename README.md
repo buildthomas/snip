@@ -124,6 +124,11 @@ dotnet run --project tools/IconGen -- png scissors-sideways-purple 256 docs/logo
 dotnet run --project tools/IconGen -- preview-scissors sheet.png      # compare shapes and colours
 ```
 
+## macOS (experimental)
+
+A native Swift port lives in [`mac/`](mac/README.md): same tools and redaction, menu-bar app, install from source
+with `mac/install.sh`. It's a first attempt and still being verified on real hardware.
+
 ## Contributing
 
 Read [AGENTS.md](AGENTS.md) (principles, hard rules and the PR review checklist) and

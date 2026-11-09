@@ -2,7 +2,8 @@
 
 Snip is a Windows 10/11 tray app (C#, .NET 10, WinForms): a small, offline, trustworthy screenshot + annotation tool.
 README.md describes the features; [docs/architecture.md](docs/architecture.md) explains how it works and why.
-This file is the rulebook for agents writing or reviewing changes.
+This file is the rulebook for agents writing or reviewing changes. The macOS port in `mac/` follows the same rules;
+see [mac/AGENTS.md](mac/AGENTS.md) for what is specific to it.
 
 ## Product principles
 
