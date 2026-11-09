@@ -124,7 +124,7 @@ internal sealed class OverlayForm : Form
         T(Tool.Text, "Text (T)");
         T(Tool.Number, "Numbered step (N)");
         T(Tool.Redact, "Redact box (B)");
-        _toolButtons.Add(new ToolButton { Kind = ButtonKind.Color, Tip = "Color  ·  scroll wheel = size" });
+        _toolButtons.Add(new ToolButton { Kind = ButtonKind.Color, Tip = "Color (scroll wheel = size)" });
         _toolButtons.Add(new ToolButton { Kind = ButtonKind.Undo, Tip = "Undo (Ctrl+Z)" });
         _toolButtons.Add(new ToolButton { Kind = ButtonKind.Redo, Tip = "Redo (Ctrl+Y)" });
         _actionButtons.Add(new ToolButton { Kind = ButtonKind.Copy, Tip = "Copy (Ctrl+C)" });
