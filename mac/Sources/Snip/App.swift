@@ -1,16 +1,19 @@
 import AppKit
 import ServiceManagement
+import SnipCore
 
 let snipVersion = "0.1.0-mac"
 let bundleID = "com.buildthomas.snip"
 let captureNotification = Notification.Name("com.buildthomas.snip.capture")
+let hotkeyChangedNotification = Notification.Name("com.buildthomas.snip.hotkeyChanged")
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private let hotKey = HotKey()
     private var session: OverlaySession?
     private var capturing = false
-    private var hotkeyItems: [NSMenuItem] = []
+    private var hotkeyInfoItem: NSMenuItem!
+    private let recorder = HotkeyRecorder()
     private var loginItem: NSMenuItem!
     private var debugItem: NSMenuItem!
 
@@ -21,10 +24,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem.button?.image = NSImage(systemSymbolName: "scissors", accessibilityDescription: "Snip")
         statusItem.menu = buildMenu()
+        NSApp.mainMenu = buildMainMenu()
 
         HotKey.onPress = { [weak self] in self?.capture(trigger: "hotkey") }
         if !hotKey.register(Settings.shared.hotkey) {
-            notify("Snip couldn't register \(Settings.shared.hotkey.title). If macOS uses it for screenshots, turn that shortcut off in System Settings > Keyboard > Keyboard Shortcuts > Screenshots, or pick another hotkey from the Snip menu.")
+            notify("Snip couldn't register \(Settings.shared.hotkey.display). Another app or a macOS shortcut (System Settings > Keyboard > Keyboard Shortcuts) probably uses it. Pick another one with Change hotkey in the Snip menu.")
+        }
+        DistributedNotificationCenter.default().addObserver(forName: hotkeyChangedNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self else { return }
+            let spec = Settings.shared.hotkey
+            Log.info("hotkey changed from the command line: \(spec.spec)")
+            if !self.hotKey.register(spec) { self.notify("Snip couldn't register \(spec.display); it may be taken by another app or a macOS shortcut.") }
         }
 
         DistributedNotificationCenter.default().addObserver(forName: captureNotification, object: nil, queue: .main) { [weak self] _ in
@@ -43,17 +53,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "Capture", action: #selector(captureFromMenu), keyEquivalent: "").target = self
         menu.addItem(.separator())
 
-        let hotkeyMenu = NSMenu()
-        for choice in HotkeyChoice.allCases {
-            let item = NSMenuItem(title: choice.title, action: #selector(chooseHotkey(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = choice.rawValue
-            hotkeyItems.append(item)
-            hotkeyMenu.addItem(item)
-        }
-        let hotkeyItem = NSMenuItem(title: "Hotkey", action: nil, keyEquivalent: "")
-        hotkeyItem.submenu = hotkeyMenu
-        menu.addItem(hotkeyItem)
+        hotkeyInfoItem = NSMenuItem(title: "Hotkey: \(Settings.shared.hotkey.display)", action: nil, keyEquivalent: "")
+        hotkeyInfoItem.isEnabled = false
+        menu.addItem(hotkeyInfoItem)
+        menu.addItem(withTitle: "Change hotkey…", action: #selector(changeHotkey), keyEquivalent: "").target = self
 
         loginItem = NSMenuItem(title: "Start at login", action: #selector(toggleLogin), keyEquivalent: "")
         loginItem.target = self
@@ -74,14 +77,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { self.capture(trigger: "menu") }
     }
 
-    @objc private func chooseHotkey(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String, let choice = HotkeyChoice(rawValue: raw) else { return }
-        if hotKey.register(choice) {
-            Settings.shared.hotkey = choice
-        } else {
-            hotKey.register(Settings.shared.hotkey)
-            notify("\(choice.title) is taken, most likely by macOS's own screenshot shortcut. Turn it off in System Settings > Keyboard > Keyboard Shortcuts > Screenshots, then pick it again.")
+    @objc private func changeHotkey() {
+        let old = Settings.shared.hotkey
+        // Unregistered while recording, so pressing the current hotkey can be recorded instead of triggering a capture.
+        hotKey.unregister()
+        recorder.show(current: old) { [weak self] spec in
+            guard let self else { return }
+            guard let spec, spec != old else {
+                self.hotKey.register(old)
+                return
+            }
+            if self.hotKey.register(spec) {
+                Settings.shared.hotkey = spec
+                Log.info("hotkey changed to \(spec.spec)")
+            } else {
+                self.hotKey.register(old)
+                self.notify("\(spec.display) is already used by another app or a macOS shortcut (System Settings > Keyboard > Keyboard Shortcuts). Kept \(old.display).")
+            }
         }
+    }
+
+    /// Hidden main menu: overlay commands go through standard menu items, so App Shortcuts customised in
+    /// System Settings > Keyboard > Keyboard Shortcuts (matched by menu title) apply to them.
+    private func buildMainMenu() -> NSMenu {
+        let main = NSMenu()
+        func submenu(_ title: String, _ items: [(String, Selector, String, NSEvent.ModifierFlags)]) {
+            let menu = NSMenu(title: title)
+            for (t, action, key, mods) in items {
+                if t == "-" { menu.addItem(.separator()); continue }
+                let item = NSMenuItem(title: t, action: action, keyEquivalent: key)
+                item.keyEquivalentModifierMask = mods
+                menu.addItem(item)
+            }
+            let holder = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            holder.submenu = menu
+            main.addItem(holder)
+        }
+        submenu("Snip", [("Quit Snip", #selector(NSApplication.terminate(_:)), "q", .command)])
+        submenu("File", [("Save…", #selector(OverlayView.snipSave(_:)), "s", .command)])
+        submenu("Edit", [
+            ("Undo", #selector(OverlayView.snipUndo(_:)), "z", .command),
+            ("Redo", #selector(OverlayView.snipRedo(_:)), "z", [.command, .shift]),
+            ("-", #selector(NSApplication.terminate(_:)), "", []),
+            ("Copy", #selector(OverlayView.snipCopy(_:)), "c", .command),
+            ("Paste", #selector(OverlayView.snipPaste(_:)), "v", .command),
+            ("Select All", #selector(OverlayView.snipSelectAll(_:)), "a", .command),
+        ])
+        return main
     }
 
     @objc private func toggleLogin() {
@@ -176,7 +218,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 extension AppDelegate: NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) {
-        for item in hotkeyItems { item.state = (item.representedObject as? String) == Settings.shared.hotkey.rawValue ? .on : .off }
+        hotkeyInfoItem.title = "Hotkey: \(Settings.shared.hotkey.display)"
         loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
         debugItem.state = Settings.shared.debugLogging ? .on : .off
     }

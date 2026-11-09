@@ -12,7 +12,7 @@ enum Diagnostics {
         lines.append("bundle path: \(Bundle.main.bundlePath)")
         lines.append("bundle id: \(Bundle.main.bundleIdentifier ?? "(none: not running from an .app bundle)")")
         lines.append("screen recording permission: \(Capture.hasPermission ? "granted" : "NOT granted")")
-        lines.append("hotkey setting: \(Settings.shared.hotkey.rawValue)")
+        lines.append("hotkey: \(Settings.shared.hotkey.display) (\(Settings.shared.hotkey.spec))")
         lines.append("start at login: \(loginStatus())")
         lines.append("debug logging: \(Log.debugEnabled)")
         lines.append("log file: \(Log.file.path)")

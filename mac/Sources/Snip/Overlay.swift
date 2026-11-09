@@ -79,7 +79,7 @@ private final class Button {
     }
 }
 
-final class OverlayView: NSView {
+final class OverlayView: NSView, NSMenuItemValidation {
     weak var session: OverlaySession?
     let capture: DisplayCapture
     private let windowRects: [CGRect]
@@ -94,7 +94,7 @@ final class OverlayView: NSView {
     private var resizeHandle = 0
 
     private var annotations: [Annotation] = []
-    private var redo: [Annotation] = []
+    private var redoStack: [Annotation] = []
     private var current: Annotation?
     private var editing: TextMark?
     private var textGrab = CGPoint.zero
@@ -150,7 +150,7 @@ final class OverlayView: NSView {
 
     func clearSelection() {
         selection = nil
-        annotations.removeAll(); redo.removeAll(); current = nil; editing = nil
+        annotations.removeAll(); redoStack.removeAll(); current = nil; editing = nil
         tool = .none
         needsDisplay = true
     }
@@ -381,7 +381,7 @@ final class OverlayView: NSView {
                 fill.setFill()
                 NSBezierPath(roundedRect: b.rect.insetBy(dx: 1, dy: 1), xRadius: 4, yRadius: 4).fill()
             }
-            let enabled = b.kind == .undo ? (!annotations.isEmpty || editing != nil) : b.kind == .redo ? !redo.isEmpty : true
+            let enabled = b.kind == .undo ? (!annotations.isEmpty || editing != nil) : b.kind == .redo ? !redoStack.isEmpty : true
             drawIcon(b, enabled: enabled)
         }
     }
@@ -766,7 +766,7 @@ final class OverlayView: NSView {
 
     private func push(_ a: Annotation) {
         annotations.append(a)
-        redo.removeAll()
+        redoStack.removeAll()
         needsDisplay = true
     }
 
@@ -788,14 +788,14 @@ final class OverlayView: NSView {
         needsDisplay = true
     }
 
-    private func undo() {
+    private func undoLast() {
         if editing != nil { editing = nil }
-        else if let a = annotations.popLast() { redo.append(a) }
+        else if let a = annotations.popLast() { redoStack.append(a) }
         needsDisplay = true
     }
 
     private func redoLast() {
-        if let a = redo.popLast() { annotations.append(a) }
+        if let a = redoStack.popLast() { annotations.append(a) }
         needsDisplay = true
     }
 
@@ -817,7 +817,7 @@ final class OverlayView: NSView {
         switch b.kind {
         case .tool: setTool(tool == b.tool ? .none : b.tool)
         case .color: paletteOpen.toggle()
-        case .undo: undo()
+        case .undo: undoLast()
         case .redo: redoLast()
         case .copy: copyToClipboard()
         case .save: saveAs()
@@ -844,14 +844,9 @@ final class OverlayView: NSView {
         let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
         let code = event.keyCode
 
+        // Undo, redo, copy, paste, select all and save arrive as menu actions (see the @objc actions below and
+        // AppDelegate.buildMainMenu), so the user's App Shortcuts customisations apply to them.
         if let note = editing {
-            if cmd && key == "c" { commitText(); copyToClipboard(); return }
-            if cmd && key == "s" { commitText(); saveAs(); return }
-            if cmd && key == "z" { if note.text.isEmpty { undo() } else { note.text = Geometry.trimWord(note.text) }; needsDisplay = true; return }
-            if cmd && key == "v" {
-                if let s = NSPasteboard.general.string(forType: .string) { append(String(s.replacingOccurrences(of: "\r\n", with: "\n").prefix(2000))) }
-                return
-            }
             if code == 53 || (code == 36 && !shift) { commitText(); return }
             if code == 36 && shift { append("\n"); return }
             if code == 51 {
@@ -871,11 +866,7 @@ final class OverlayView: NSView {
             else { session?.close(reason: "escape") }
             return
         }
-        if (cmd && key == "c") || (code == 36 && !cmd) { copyToClipboard(); return }
-        if cmd && key == "s" { saveAs(); return }
-        if cmd && key == "z" { if shift { redoLast() } else { undo() }; return }
-        if cmd && key == "y" { redoLast(); return }
-        if cmd && key == "a" { session?.selectionStarted(on: self); setSelection(bounds); return }
+        if code == 36 && !cmd { copyToClipboard(); return }
         if cmd || option || selection == nil { super.keyDown(with: event); return }
 
         let map: [String: Tool] = ["p": .pen, "l": .line, "a": .arrow, "r": .rectangle, "e": .ellipse, "h": .highlighter,
@@ -897,6 +888,49 @@ final class OverlayView: NSView {
                 r.origin.y = min(max(r.minY + dy, 0), max(0, bounds.height - r.height))
             }
             setSelection(r)
+        }
+    }
+
+    // MARK: - Menu actions
+
+    @objc func snipUndo(_ sender: Any?) {
+        if let note = editing, !note.text.isEmpty {
+            note.text = Geometry.trimWord(note.text)
+            needsDisplay = true
+        } else {
+            undoLast()
+        }
+    }
+
+    @objc func snipRedo(_ sender: Any?) { redoLast() }
+
+    @objc func snipCopy(_ sender: Any?) {
+        commitText()
+        copyToClipboard()
+    }
+
+    @objc func snipPaste(_ sender: Any?) {
+        guard editing != nil, let s = NSPasteboard.general.string(forType: .string) else { return }
+        append(String(s.replacingOccurrences(of: "\r\n", with: "\n").prefix(2000)))
+    }
+
+    @objc func snipSelectAll(_ sender: Any?) {
+        guard editing == nil else { return }
+        session?.selectionStarted(on: self)
+        setSelection(bounds)
+    }
+
+    @objc func snipSave(_ sender: Any?) {
+        commitText()
+        saveAs()
+    }
+
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        switch item.action {
+        case #selector(snipPaste(_:)): return editing != nil
+        case #selector(snipCopy(_:)), #selector(snipSave(_:)): return selection != nil
+        case #selector(snipRedo(_:)): return !redoStack.isEmpty
+        default: return true
         }
     }
 

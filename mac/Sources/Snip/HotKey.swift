@@ -1,5 +1,6 @@
 import Carbon
 import Foundation
+import SnipCore
 
 /// Global hotkey via Carbon's RegisterEventHotKey: needs no Accessibility or Input Monitoring permission and only
 /// ever sees its own key combination, never other keystrokes.
@@ -9,25 +10,29 @@ final class HotKey {
     private var handlerRef: EventHandlerRef?
 
     @discardableResult
-    func register(_ choice: HotkeyChoice) -> Bool {
+    func register(_ spec: HotkeySpec) -> Bool {
         unregister()
         if handlerRef == nil {
-            var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+            var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
             let status = InstallEventHandler(GetApplicationEventTarget(), { _, _, _ in
                 Log.debug("hotkey pressed")
                 DispatchQueue.main.async { HotKey.onPress?() }
                 return noErr
-            }, 1, &spec, nil, &handlerRef)
+            }, 1, &eventType, nil, &handlerRef)
             if status != noErr { Log.error("InstallEventHandler failed: \(status)") }
         }
         let id = EventHotKeyID(signature: OSType(0x534E_4950), id: 1)
-        let status = RegisterEventHotKey(choice.keyCode, UInt32(cmdKey | shiftKey), id, GetApplicationEventTarget(), 0, &hotKeyRef)
+        guard spec.hasRequiredModifier else {
+            Log.error("refusing hotkey without Command/Option/Control: \(spec.spec)")
+            return false
+        }
+        let status = RegisterEventHotKey(spec.keyCode, spec.carbonModifiers, id, GetApplicationEventTarget(), 0, &hotKeyRef)
         if status == noErr {
-            Log.info("hotkey registered: \(choice.rawValue)")
+            Log.info("hotkey registered: \(spec.spec) (\(spec.display))")
             return true
         }
-        // -9878 (eventHotKeyExistsErr) usually means the system screenshot shortcut still owns this combination.
-        Log.error("RegisterEventHotKey(\(choice.rawValue)) failed: \(status)")
+        // -9878 (eventHotKeyExistsErr): another app or a system shortcut already owns this combination.
+        Log.error("RegisterEventHotKey(\(spec.spec)) failed: \(status)")
         return false
     }
 

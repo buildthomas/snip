@@ -26,9 +26,11 @@ Update: `git pull && ./install.sh`. Remove everything: `./uninstall.sh`.
 
 ## Using it
 
-- **Hotkey:** ⌘⇧2 by default. macOS reserves ⌘⇧3/4/5 for its own screenshots; to use ⌘⇧4 or ⌘⇧5 instead, turn the
-  system shortcut off (System Settings > Keyboard > Keyboard Shortcuts > Screenshots) and pick it from Snip's menu.
-  You can also click **Capture** in the menu, or run `open -a Snip --args --capture` while Snip is running.
+- **Hotkey:** ⇧⌘2 by default. Set any combination with **Change hotkey…** in Snip's menu (press it, then Save), or
+  from a terminal: `~/Applications/Snip.app/Contents/MacOS/Snip --set-hotkey cmd+shift+s`. It needs ⌘, ⌥ or ⌃;
+  combinations macOS or another app already owns are refused (the previous hotkey stays). To use ⇧⌘3/4/5, turn the
+  system screenshot shortcut off first (System Settings > Keyboard > Keyboard Shortcuts > Screenshots). You can also
+  click **Capture** in the menu, or run `open -a Snip --args --capture` while Snip is running.
 - **Select:** drag a region or click a window. ⌘A selects the whole display. Drag handles to resize, drag inside to
   move, arrow keys nudge (Shift+arrows resize).
 - **Tools:** Pen (P), Line (L), Arrow (A), Rectangle (R), Ellipse (E), Highlighter (H), Text (T), Numbered step (N),
@@ -39,7 +41,8 @@ Update: `git pull && ./install.sh`. Remove everything: `./uninstall.sh`.
   shape, **Option+scroll** sets the cell size. Secure (default) pixelate/blur are generated so nothing underneath can
   be recovered; the orange shield means a real (reversible) pixelate/blur.
 - **Output:** ⌘C or Return copies and closes, ⌘S saves (opens in the last folder), Esc or right-click cancels,
-  ⌘Z / ⌘⇧Z undo and redo.
+  ⌘Z / ⇧⌘Z undo and redo. Undo, Redo, Copy, Paste, Select All and Save… are regular menu items, so shortcuts you
+  customised in System Settings > Keyboard > Keyboard Shortcuts > App Shortcuts apply to them.
 
 ## Privacy
 

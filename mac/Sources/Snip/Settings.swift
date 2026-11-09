@@ -8,28 +8,6 @@ enum Tool: String, CaseIterable {
 enum RedactStyle: Int { case black = 0, pixelate = 1, blur = 2 }
 enum RedactShape: Int { case box = 0, brush = 2 }
 
-/// Global hotkey choices. macOS reserves Cmd+Shift+3/4/5 for its own screenshots; to use 4 or 5, turn the system
-/// shortcut off first (System Settings > Keyboard > Keyboard Shortcuts > Screenshots).
-enum HotkeyChoice: String, CaseIterable {
-    case cmdShift2 = "cmd-shift-2", cmdShift4 = "cmd-shift-4", cmdShift5 = "cmd-shift-5"
-    var title: String {
-        switch self {
-        case .cmdShift2: return "⌘⇧2"
-        case .cmdShift4: return "⌘⇧4"
-        case .cmdShift5: return "⌘⇧5"
-        }
-    }
-
-    /// Carbon virtual key codes for 2, 4 and 5.
-    var keyCode: UInt32 {
-        switch self {
-        case .cmdShift2: return 0x13
-        case .cmdShift4: return 0x15
-        case .cmdShift5: return 0x17
-        }
-    }
-}
-
 /// UserDefaults-backed settings (domain com.buildthomas.snip). Inspect with `defaults read com.buildthomas.snip`.
 final class Settings {
     static let shared = Settings()
@@ -38,7 +16,7 @@ final class Settings {
     private init() {
         d.register(defaults: [
             "colorHex": "E62828", "size": 4, "redactStyle": RedactStyle.pixelate.rawValue, "redactShape": RedactShape.brush.rawValue,
-            "redactCell": 12, "redactSecure": true, "emojiIndex": 0, "hotkey": HotkeyChoice.cmdShift2.rawValue,
+            "redactCell": 12, "redactSecure": true, "emojiIndex": 0,
             "debugLogging": true, "loginItemInitialized": false,
         ])
     }
@@ -62,9 +40,26 @@ final class Settings {
     }
     var redactSecure: Bool { get { d.bool(forKey: "redactSecure") } set { d.set(newValue, forKey: "redactSecure") } }
     var emojiIndex: Int { get { min(max(d.integer(forKey: "emojiIndex"), 0), EmojiSet.all.count - 1) } set { d.set(newValue, forKey: "emojiIndex") } }
-    var hotkey: HotkeyChoice {
-        get { HotkeyChoice(rawValue: d.string(forKey: "hotkey") ?? "") ?? .cmdShift2 }
-        set { d.set(newValue.rawValue, forKey: "hotkey") }
+    /// The global hotkey. Earlier builds stored a preset name under "hotkey"; that is still honoured.
+    var hotkey: HotkeySpec {
+        get {
+            if d.object(forKey: "hotkeyKeyCode") != nil {
+                return HotkeySpec(keyCode: UInt32(d.integer(forKey: "hotkeyKeyCode")),
+                                  carbonModifiers: UInt32(d.integer(forKey: "hotkeyModifiers")),
+                                  keyLabel: d.string(forKey: "hotkeyLabel"))
+            }
+            switch d.string(forKey: "hotkey") {
+            case "cmd-shift-4": return HotkeySpec.parse("cmd+shift+4") ?? .defaultSpec
+            case "cmd-shift-5": return HotkeySpec.parse("cmd+shift+5") ?? .defaultSpec
+            default: return .defaultSpec
+            }
+        }
+        set {
+            d.set(Int(newValue.keyCode), forKey: "hotkeyKeyCode")
+            d.set(Int(newValue.carbonModifiers), forKey: "hotkeyModifiers")
+            d.set(newValue.keyLabel, forKey: "hotkeyLabel")
+            d.removeObject(forKey: "hotkey")
+        }
     }
     var lastSaveDirectory: URL? {
         get { d.string(forKey: "lastSaveDirectory").map { URL(fileURLWithPath: $0) } }

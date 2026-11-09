@@ -16,7 +16,8 @@ overlay, coordinates on multi-display or mixed-scale setups, the hotkey and perm
 |---|---|
 | `Sources/SnipCore` | Pure logic, no AppKit: geometry, redaction (port of the Windows algorithm). Unit tested. |
 | `Sources/Snip/App.swift`, `main.swift` | Menu-bar app, single instance, CLI flags, Start at login (`SMAppService`) |
-| `Sources/Snip/HotKey.swift` | Carbon `RegisterEventHotKey` (no Accessibility permission) |
+| `Sources/Snip/HotKey.swift`, `HotkeyRecorder.swift` | Carbon `RegisterEventHotKey` (no Accessibility permission); recorder window for Change hotkey |
+| `Sources/SnipCore/HotkeySpec.swift` | Hotkey model: parses/prints `cmd+shift+s`, Carbon masks, validation. Unit tested. |
 | `Sources/Snip/Capture.swift` | ScreenCaptureKit capture of every display, window rectangles for click-to-select |
 | `Sources/Snip/Overlay.swift` | Per-display overlay window + view: selection, tools, bars, keyboard, copy/save |
 | `Sources/Snip/Annotations.swift` | Shapes; `RedactMark` calls SnipCore for its pixels |
@@ -52,19 +53,26 @@ Start at login, settings or permissions look broken when they aren't.
   scale. Paste it into bug reports.
 - **Trigger a capture without the hotkey:** `open -a Snip --args --capture` (a second launch tells the running copy).
 - **Settings:** `defaults read com.buildthomas.snip`; reset with `defaults delete com.buildthomas.snip`.
+- **Hotkey from the CLI:** `Snip --set-hotkey cmd+shift+s` (the running copy re-registers; a conflict is logged).
+
+Overlay commands (Undo, Redo, Copy, Paste, Select All, Save…) are items in the hidden main menu
+(`AppDelegate.buildMainMenu`), not hard-coded keys, so the user's App Shortcuts apply. Keep it that way: add new
+commands as menu items with standard titles.
 
 ## Verification checklist (run on a real Mac, tick in the PR)
 
 1. `./install.sh` succeeds; menu-bar icon appears; `--diagnostics` shows the bundle id and arch `arm64`.
 2. First capture prompts for Screen Recording; after granting and relaunching, `--diagnostics` says granted.
-3. ⌘⇧2 opens the overlay within ~300 ms (see `overlay visible ... ms after trigger` in the log) on every display.
+3. The hotkey (default ⇧⌘2) opens the overlay within ~300 ms (see `overlay visible ... ms after trigger` in the log)
+   on every display. Change hotkey… records a new combination (e.g. ⇧⌘S), refuses taken ones, survives a relaunch.
 4. An open menu or tooltip is still visible in the frozen image.
 5. Drag-select, click-to-select a window (rectangle matches the window), ⌘A, resize handles, arrow-key nudge.
 6. Every tool draws where the cursor is (watch for y-flips or Retina 2x offsets); scroll resizes live; hover
    preview matches the stamp size.
 7. Redact: brush and box; black/pixelate/blur; secure vs insecure (orange shield); Option+scroll cell size.
 8. Text: type, move by dragging its box, Return; emoji pick, size, rotate by dragging.
-9. ⌘C pastes into another app at full Retina resolution; ⌘S saves PNG/JPEG and reopens in the same folder next time.
+9. Remapped App Shortcuts for Undo/Redo/Copy (System Settings > Keyboard > Keyboard Shortcuts > App Shortcuts) work
+   in the overlay. ⌘C pastes into another app at full Retina resolution; ⌘S saves PNG/JPEG and reopens in the same folder next time.
 10. Esc closes; a second capture works; memory settles back after closing (Activity Monitor).
 11. Start at login toggles and survives a log out/in; `./uninstall.sh` leaves nothing behind.
 
