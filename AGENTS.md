@@ -10,6 +10,8 @@ Snip is a Windows tray app (C#, .NET 10, WinForms). See README.md for features a
 - **Keep the hook callback cheap** (`KeyboardHook.HookProc`): no I/O, allocation or blocking. It runs on every keystroke.
 - **Ask the user before running `tests/e2e/E2E.ps1` or `Scenarios.ps1`.** They drive the real mouse and keyboard;
   the user must keep hands off. `dotnet test` and `tests/e2e/Timing.ps1` need no input and are always fine.
+- **Don't edit sources with Windows PowerShell `Get-Content`/`Set-Content`.** PowerShell 5.1 reads UTF-8 without a
+  BOM as Windows-1252 and garbles non-ASCII text (a `SourceEncodingTests` test guards this).
 - **README/doc images come from `tools/DemoShot`** (synthetic backdrop), never from a real screen capture.
 
 ## Cleaning up after test runs
