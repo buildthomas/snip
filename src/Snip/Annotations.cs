@@ -166,7 +166,7 @@ internal sealed class TextNote : Annotation
 
 internal sealed class NumberMark : Annotation
 {
-    public PointF Center { get; init; }
+    public PointF Center { get; set; }
     public int Number { get; init; }
 
     public float Radius => 10 + Size * 2;

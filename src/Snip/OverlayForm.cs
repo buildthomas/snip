@@ -575,6 +575,8 @@ internal sealed class OverlayForm : Form
     protected override void OnMouseWheel(MouseEventArgs e)
     {
         base.OnMouseWheel(e);
+        // A redact box is always solid black, so a size change mid-drag would only confuse.
+        if (_drag == Drag.Draw && _current is BoxShape { Kind: BoxKind.Redact }) return;
         var next = Math.Clamp(_size + Math.Sign(e.Delta), MinSize, MaxSize);
         if (next == _size && _bubble != null) return;
         _size = next;
@@ -685,9 +687,10 @@ internal sealed class OverlayForm : Form
                 InvalidateChrome();
                 return;
             case Tool.Number:
+                // Held until mouse-up, so scrolling can resize it and moving can reposition it before it's placed.
                 var n = _annotations.Count(a => a is NumberMark) + 1;
-                Push(new NumberMark { Color = _color, Size = _size, Center = pt, Number = n });
-                return;
+                _current = new NumberMark { Color = _color, Size = _size, Center = pt, Number = n };
+                break;
             case Tool.Pen:
             case Tool.Highlighter:
                 var s = new Stroke { Color = _color, Size = _size, Highlighter = _tool == Tool.Highlighter };
@@ -728,6 +731,9 @@ internal sealed class OverlayForm : Form
                 break;
             case BoxShape b:
                 b.Rect = Renderer.Box(_dragStart, pt, shift);
+                break;
+            case NumberMark m:
+                m.Center = pt;
                 break;
         }
         var now = _current.Bounds;
