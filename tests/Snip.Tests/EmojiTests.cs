@@ -35,7 +35,9 @@ public class EmojiTests
         {
             var glyph = EmojiFont.Get(e);
             Assert.True(glyph != null, $"{e} has no glyph");
-            Assert.True(glyph!.Layers.Select(l => l.Color.ToArgb()).Distinct().Count() >= 2, $"{e} is not multi-coloured");
+            // Some designs are a single colour (Windows 11's star is one yellow layer); what matters is that the
+            // colour comes from the font's colour table rather than the monochrome fallback.
+            Assert.True(glyph!.FromColorTable, $"{e} fell back to monochrome");
         }
     }
 

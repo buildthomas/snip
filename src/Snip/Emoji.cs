@@ -16,7 +16,7 @@ internal static class EmojiFont
     };
 
     public sealed record Layer(GraphicsPath Path, Color Color);
-    public sealed record Glyph(IReadOnlyList<Layer> Layers, RectangleF Bounds);
+    public sealed record Glyph(IReadOnlyList<Layer> Layers, RectangleF Bounds, bool FromColorTable);
 
     private const string FontName = "Segoe UI Emoji";
     private const int EmPx = 256;
@@ -65,13 +65,14 @@ internal static class EmojiFont
                 var path = Outline(dc, layerGid);
                 if (path != null) layers.Add(new Layer(path, PaletteColor(_tables.Cpal, paletteIndex)));
             }
+            var fromColorTable = layers.Count > 0;
             if (layers.Count == 0 && Outline(dc, gid) is GraphicsPath mono)
                 layers.Add(new Layer(mono, Color.FromArgb(60, 60, 60)));
             if (layers.Count == 0) return null;
 
             var bounds = layers[0].Path.GetBounds();
             foreach (var l in layers.Skip(1)) bounds = RectangleF.Union(bounds, l.Path.GetBounds());
-            return new Glyph(layers, bounds);
+            return new Glyph(layers, bounds, fromColorTable);
         }
         finally
         {

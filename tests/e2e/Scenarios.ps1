@@ -17,11 +17,23 @@ New-Item -ItemType Directory -Force $saveDir | Out-Null
 Get-ChildItem $saveDir | Remove-Item -Force
 Get-Process Snip -ErrorAction SilentlyContinue | Stop-Process -Force
 $script:proc = Start-Process $Exe -PassThru
-$script:notepad = Start-Process notepad.exe -PassThru
-Start-Sleep -Milliseconds 1500
-$notepad.Refresh()
-$np = $notepad.MainWindowHandle
-if ($np -eq [IntPtr]::Zero) { Fail 'notepad window not found' }
+# A throwaway window with a text box (it has a right-click menu). Notepad on Windows 11 is a store app whose
+# process can't be tracked reliably, and it might be the user's own open Notepad.
+$targetScript = Join-Path $OutDir 'target.ps1'
+Set-Content -Encoding utf8 $targetScript @'
+Add-Type -AssemblyName System.Windows.Forms
+$f = New-Object System.Windows.Forms.Form
+$f.Text = 'Snip E2E target'
+$t = New-Object System.Windows.Forms.TextBox
+$t.Multiline = $true; $t.Dock = 'Fill'; $t.Text = 'Snip end-to-end test window'
+$f.Controls.Add($t)
+[System.Windows.Forms.Application]::Run($f)
+'@
+$script:notepad = Start-Process powershell -ArgumentList '-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-File', $targetScript -PassThru -WindowStyle Normal
+$np = [IntPtr]::Zero
+$sw = [Diagnostics.Stopwatch]::StartNew()
+while ($np -eq [IntPtr]::Zero -and $sw.ElapsedMilliseconds -lt 10000) { Start-Sleep -Milliseconds 100; $np = [In]::FindWindow([NullString]::Value, 'Snip E2E target') }
+if ($np -eq [IntPtr]::Zero) { Fail 'test window not found' }
 $p = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
 [void][In]::MoveWindow($np, $p.X + 700, $p.Y + 250, 900, 600, $true)
 [void][In]::SetForegroundWindow($np)
