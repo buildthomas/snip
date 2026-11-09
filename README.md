@@ -22,7 +22,9 @@ menus, tooltips and hover states stay in the picture.
 - **Drag** to select a region, or **click** a window to select exactly that window. **Ctrl+A** selects the monitor under the cursor.
 - Drag the handles to resize, drag inside to move, arrow keys nudge (Shift+arrows resize).
 - Pick a tool from the toolbar and draw inside the selection. Hold **Shift** for 45° lines/arrows and square boxes/circles.
-- **Scroll wheel** changes the size; the color button opens the palette. Color and size are remembered.
+- **Scroll wheel** changes the size, also while you're still holding the mouse button. A hover preview shows the
+  brush, stroke or stamp at its real size before you click. The color button opens the palette. Color and size are
+  remembered.
 - **Ctrl+C** / **Enter**: copy to clipboard and close. **Ctrl+S**: save as (PNG/JPG/BMP), the dialog opens in the last folder you saved to.
 - **Esc** or right-click: cancel. **Ctrl+Z / Ctrl+Y**: undo / redo.
 
@@ -31,10 +33,31 @@ menus, tooltips and hover states stay in the picture.
 | Pen | P | | Highlighter | H |
 | Line | L | | Text | T |
 | Arrow | A | | Numbered step (1, 2, 3…) | N |
-| Rectangle | R | | Redact (solid black box) | B |
-| Ellipse | E | | | |
+| Rectangle | R | | Emoji stamp | M |
+| Ellipse | E | | Redact | B |
 
 Text: click to place, type, **Enter** to finish, **Shift+Enter** for a new line, **Ctrl+V** pastes text.
+
+Numbered steps and emoji are placed when you release the mouse button: scroll to resize while holding. Emoji come in
+full colour from Windows' own Segoe UI Emoji font; pick one from the grid next to the tool, and drag while holding the
+button to rotate it (Shift snaps to 15°).
+
+### Redact
+
+![Redact tool with brush, box, pixelate, blur and black](docs/redact.png)
+
+The redact bar appears next to the tool: **Brush · Box | Black · Pixelate · Blur | secure toggle | cell size**.
+
+- **Brush** (default) paints redaction along the stroke; scroll sets the width. **Box** covers a rectangle. **F** switches.
+- **Black** is a solid fill. **Pixelate** and **Blur** look like the familiar effects. **Ctrl+scroll** sets the cell
+  size (4–48 px), live, even mid-stroke.
+- **Secure** (shield, the default): Pixelate and Blur are generated from fresh randomness plus only a 4-tone palette of
+  the covered area and the colours just outside its edge. They never use where anything was, so nothing underneath can
+  be recovered, not even by averaging many screenshots of the same content.
+- **Insecure** (orange shield): a real pixelation or blur of the covered pixels. It looks the most faithful, but like
+  any real blur or pixelation it can be partly reversed. Black is always secure.
+
+Every redaction is flattened into the copied or saved image; there is no hidden layer to remove.
 
 Tray menu: capture, use PrintScreen key (on/off), start with Windows (on/off), open settings folder, exit.
 
@@ -53,7 +76,8 @@ autostart. `tools\uninstall.ps1` removes everything.
 ## Privacy and footprint
 
 - No network code at all. Images only go to the clipboard or to a file you pick.
-- Settings live in `%APPDATA%\Snip\settings.json` (last save folder, color, size, toggles). Nothing else is stored.
+- Settings live in `%APPDATA%\Snip\settings.json` (last save folder, color, size, tool options, toggles). Nothing
+  else is stored.
 - Idle: 0% CPU, about 10–20 MB private memory, no timers or polling. The keyboard hook runs on its own thread and
   only checks a few key states per keystroke, so typing elsewhere is never delayed. Capture buffers are released as
   soon as the overlay closes. The working set is not force-trimmed, so the hook never has to page back in mid-keystroke
@@ -72,14 +96,14 @@ autostart. `tools\uninstall.ps1` removes everything.
 ## Development
 
 ```powershell
-dotnet test                                   # unit tests (rendering, geometry, clipboard, file formats)
+dotnet test                                   # unit tests (rendering, redaction, emoji, hotkeys, clipboard, files)
 powershell -STA -File tests\e2e\E2E.ps1 -Exe <Snip.exe> -OutDir <dir>        # drives mouse + keyboard
 powershell -STA -File tests\e2e\Scenarios.ps1 -Exe <Snip.exe> -OutDir <dir>  # menus, window click, save dialog
 powershell -File tests\e2e\Timing.ps1 -Exe <Snip.exe>                         # overlay latency, no input needed
 ```
 
 Set `SNIP_TRACE=1` to log capture timings to `%APPDATA%\Snip\snip.log`. Errors are always logged there (never key data).
-`dotnet run --project tools/DemoShot -- docs/screenshot.png` regenerates the README screenshot from a synthetic
+`dotnet run --project tools/DemoShot` regenerates `docs/screenshot.png` and `docs/redact.png` from a synthetic
 backdrop (it never reads the real screen).
 
 The icon comes from `tools/IconGen` (design `scissors-sideways-purple`):

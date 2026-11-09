@@ -32,7 +32,7 @@ public class RenderingTests
     public void Compose_RedactIsFullyOpaqueBlack()
     {
         using var capture = Solid(100, 100, Color.FromArgb(200, 10, 10));
-        var redact = new BoxShape { Kind = BoxKind.Redact, Rect = new RectangleF(10, 10, 30, 30), Color = Color.Red, Size = 4 };
+        var redact = new RedactMark { Source = capture, Style = RedactStyle.Black, Rect = new RectangleF(10, 10, 30, 30) };
 
         using var img = Renderer.Compose(capture, new Rectangle(0, 0, 100, 100), new[] { redact });
 
@@ -46,7 +46,7 @@ public class RenderingTests
     public void Compose_TranslatesAnnotationsIntoSelectionSpace()
     {
         using var capture = Solid(300, 300, Color.White);
-        var box = new BoxShape { Kind = BoxKind.Redact, Rect = new RectangleF(110, 120, 5, 5) };
+        var box = new RedactMark { Source = capture, Style = RedactStyle.Black, Rect = new RectangleF(110, 120, 5, 5) };
 
         using var img = Renderer.Compose(capture, new Rectangle(100, 100, 50, 50), new[] { box });
 

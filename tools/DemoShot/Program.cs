@@ -4,21 +4,19 @@ using System.Drawing.Imaging;
 using System.Drawing.Text;
 using Snip;
 
-// Usage: dotnet run --project tools/DemoShot -- <output.png>
-var output = args.Length > 0 ? args[0] : "screenshot.png";
+// Renders the README screenshots from a synthetic backdrop; it never reads the real screen.
+// Usage: dotnet run --project tools/DemoShot -- [docs/screenshot.png] [docs/redact.png]
 const int W = 1600, H = 900;
-
 var backdrop = Backdrop.Draw(W, H);
 var red = Color.FromArgb(230, 40, 40);
-var settings = new Settings { ColorArgb = red.ToArgb(), Size = 4 };
-using var overlay = new OverlayForm(backdrop, new Rectangle(0, 0, W, H), new List<Rectangle>(), settings);
+var selection = new Rectangle(378, 144, 862, 638);
 
 var highlight = new Stroke { Highlighter = true, Color = Color.FromArgb(255, 214, 0), Size = 4 };
 highlight.Points.AddRange(new PointF[] { new(386, 700), new(912, 700) });
 var underline = new Stroke { Color = red, Size = 3 };
 for (var x = 410f; x <= 508; x += 4) underline.Points.Add(new PointF(x, 366 + MathF.Sin(x / 5f) * 2.5f));
 
-var annotations = new Annotation[]
+Render(args.Length > 0 ? args[0] : "docs/screenshot.png", Tool.Arrow, hoverTool: true, new Annotation[]
 {
     highlight,
     new BoxShape { Kind = BoxKind.Rectangle, Rect = new RectangleF(904, 192, 256, 116), Color = red, Size = 4 },
@@ -27,16 +25,33 @@ var annotations = new Annotation[]
     new NumberMark { Center = new PointF(1130, 224), Number = 3, Color = red, Size = 4 },
     new LineShape { Start = new PointF(946, 428), End = new PointF(862, 386), Arrow = true, Color = red, Size = 4 },
     new TextNote { Origin = new PointF(954, 420), Text = "Spike after launch", Color = red, Size = 4 },
+    new EmojiMark { Emoji = "🎉", Center = new PointF(1100, 485), Size = 5, Angle = 15 },
     new BoxShape { Kind = BoxKind.Ellipse, Rect = new RectangleF(598, 654, 62, 34), Color = red, Size = 3 },
-    new BoxShape { Kind = BoxKind.Redact, Rect = new RectangleF(1022, 670, 160, 26) },
+    new EmojiMark { Emoji = "👀", Center = new PointF(705, 671), Size = 3, Angle = -10 },
+    new RedactMark { Source = backdrop, Style = RedactStyle.Black, Shape = RedactShape.Box, Rect = new RectangleF(1022, 670, 160, 26) },
     underline,
-};
-overlay.SetDemoState(new Rectangle(378, 144, 862, 638), annotations, Tool.Arrow, hoverActiveTool: true);
+});
 
-using var result = new Bitmap(W, H, PixelFormat.Format32bppArgb);
-using (var g = Graphics.FromImage(result)) overlay.Render(g, new Rectangle(0, 0, W, H));
-result.Save(output, ImageFormat.Png);
-Console.WriteLine($"wrote {Path.GetFullPath(output)}");
+var seats = new RedactMark { Source = backdrop, Style = RedactStyle.Pixelate, Shape = RedactShape.Brush, Seed = 13, BrushWidth = 46, CellSize = 8 };
+seats.Points.AddRange(new PointF[] { new(630, 618), new(634, 650), new(628, 684), new(633, 716), new(630, 742) });
+Render(args.Length > 1 ? args[1] : "docs/redact.png", Tool.Redact, hoverTool: false, new Annotation[]
+{
+    new RedactMark { Source = backdrop, Style = RedactStyle.Pixelate, Shape = RedactShape.Box, Seed = 11, CellSize = 16, Rect = new RectangleF(904, 192, 256, 116) },
+    new RedactMark { Source = backdrop, Style = RedactStyle.Blur, Shape = RedactShape.Box, Seed = 12, CellSize = 20, Rect = new RectangleF(420, 360, 380, 150) },
+    seats,
+    new RedactMark { Source = backdrop, Style = RedactStyle.Black, Shape = RedactShape.Box, Rect = new RectangleF(1022, 670, 160, 26) },
+});
+
+void Render(string path, Tool tool, bool hoverTool, Annotation[] annotations)
+{
+    var settings = new Settings { ColorArgb = red.ToArgb(), Size = 4, RedactStyle = RedactStyle.Pixelate, RedactShape = RedactShape.Brush };
+    using var overlay = new OverlayForm((Bitmap)backdrop.Clone(), new Rectangle(0, 0, W, H), new List<Rectangle>(), settings);
+    overlay.SetDemoState(selection, annotations, tool, hoverTool);
+    using var result = new Bitmap(W, H, PixelFormat.Format32bppArgb);
+    using (var g = Graphics.FromImage(result)) overlay.Render(g, new Rectangle(0, 0, W, H));
+    result.Save(path, ImageFormat.Png);
+    Console.WriteLine($"wrote {Path.GetFullPath(path)}");
+}
 
 static class Backdrop
 {

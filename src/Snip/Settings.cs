@@ -10,6 +10,11 @@ internal sealed class Settings
     public int Size { get; set; } = 4;
     public bool PrintScreenEnabled { get; set; } = true;
     public bool StartWithWindows { get; set; } = true;
+    public RedactStyle RedactStyle { get; set; } = RedactStyle.Pixelate;
+    public RedactShape RedactShape { get; set; } = RedactShape.Brush;
+    public int RedactCell { get; set; } = 12;
+    public int EmojiIndex { get; set; }
+    public bool RedactSecure { get; set; } = true;
 
     public static string Directory => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Snip");
     private static string FilePath => Path.Combine(Directory, "settings.json");

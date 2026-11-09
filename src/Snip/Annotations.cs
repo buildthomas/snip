@@ -4,7 +4,7 @@ using System.Drawing.Text;
 
 namespace Snip;
 
-internal enum Tool { None, Pen, Line, Arrow, Rectangle, Ellipse, Highlighter, Text, Number, Redact }
+internal enum Tool { None, Pen, Line, Arrow, Rectangle, Ellipse, Highlighter, Text, Number, Emoji, Redact }
 
 // All coordinates are in capture-bitmap pixels.
 internal abstract class Annotation
@@ -105,7 +105,7 @@ internal sealed class LineShape : Annotation
             (Arrow ? HeadLength : 0) + Size + 2);
 }
 
-internal enum BoxKind { Rectangle, Ellipse, Redact }
+internal enum BoxKind { Rectangle, Ellipse }
 
 internal sealed class BoxShape : Annotation
 {
@@ -114,14 +114,6 @@ internal sealed class BoxShape : Annotation
 
     public override void Draw(Graphics g)
     {
-        if (Kind == BoxKind.Redact)
-        {
-            var old = g.SmoothingMode;
-            g.SmoothingMode = SmoothingMode.None;
-            g.FillRectangle(Brushes.Black, Rect);
-            g.SmoothingMode = old;
-            return;
-        }
         using var pen = new Pen(Color, Size) { LineJoin = LineJoin.Miter };
         if (Kind == BoxKind.Rectangle) g.DrawRectangle(pen, Rect.X, Rect.Y, Rect.Width, Rect.Height);
         else g.DrawEllipse(pen, Rect);

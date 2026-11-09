@@ -11,6 +11,7 @@ internal sealed class OverlayForm : Form
 
     private static readonly Color Accent = Color.FromArgb(0, 150, 255);
     private static readonly Color BarBack = Color.FromArgb(240, 32, 32, 34);
+    private static readonly Color Warning = Color.FromArgb(230, 120, 0);
 
     private readonly Bitmap _capture;
     private readonly Bitmap _dimmed;
@@ -38,6 +39,35 @@ internal sealed class OverlayForm : Form
 
     private readonly List<ToolButton> _toolButtons = new();
     private readonly List<ToolButton> _actionButtons = new();
+    private readonly List<ToolButton> _redactButtons = new();
+    private readonly List<ToolButton> _emojiButtons = new();
+    private Rectangle _emojiPanel;
+    private int _emojiIndex;
+    private const int EmojiColumns = 8;
+    private bool EmojiPanelVisible => _tool == Tool.Emoji && _selection != null;
+    private string CurrentEmoji => EmojiFont.Set[_emojiIndex];
+    private Rectangle _redactBar;
+    private RedactStyle _redactStyle;
+    private RedactShape _redactShape;
+    private bool _redactSecure;
+    private int _redactCell;
+    private Rectangle _cellReadout;
+    private string CellText => $"{_redactCell} px";
+    private bool RedactBarVisible => _tool == Tool.Redact && _selection != null;
+
+    private const string SecureTip = "Secure: generated, nothing underneath can be recovered. Click for insecure";
+    private const string InsecureTip = "INSECURE: real pixelate/blur of the content, can be partly reversed. Click for secure";
+
+    private void UpdateSecureButton()
+    {
+        var i = _redactButtons.FindIndex(b => b.Kind == ButtonKind.RedactSecure);
+        _redactButtons[i] = new ToolButton
+        {
+            Kind = ButtonKind.RedactSecure, Option = _redactSecure ? 1 : 0, Tip = _redactSecure ? SecureTip : InsecureTip,
+            Rect = _redactButtons[i].Rect,
+        };
+        if (_hoverButton?.Kind == ButtonKind.RedactSecure) _hoverButton = _redactButtons[i];
+    }
     private Rectangle _toolBar, _actionBar, _paletteRect, _tipRect;
     private bool _paletteOpen;
     private ToolButton? _hoverButton;
@@ -55,6 +85,11 @@ internal sealed class OverlayForm : Form
         _settings = settings;
         _color = Color.FromArgb(settings.ColorArgb);
         _size = Math.Clamp(settings.Size, MinSize, MaxSize);
+        _redactStyle = Enum.IsDefined(settings.RedactStyle) ? settings.RedactStyle : RedactStyle.Pixelate;
+        _redactShape = Enum.IsDefined(settings.RedactShape) ? settings.RedactShape : RedactShape.Box;
+        _redactSecure = settings.RedactSecure;
+        _emojiIndex = Math.Clamp(settings.EmojiIndex, 0, EmojiFont.Set.Length - 1);
+        _redactCell = RedactMark.CellSteps.Contains(settings.RedactCell) ? settings.RedactCell : 12;
         _windows = windows.Select(w => { w.Offset(-virtualScreen.X, -virtualScreen.Y); return w; }).ToList();
 
         _dimmed = ScreenCapture.Dim(capture, 136);
@@ -125,10 +160,22 @@ internal sealed class OverlayForm : Form
         T(Tool.Highlighter, "Highlighter (H)");
         T(Tool.Text, "Text (T)");
         T(Tool.Number, "Numbered step (N)");
-        T(Tool.Redact, "Redact box (B)");
+        T(Tool.Emoji, "Emoji stamp (M): drag while holding to rotate");
+        T(Tool.Redact, "Redact (B)");
         _toolButtons.Add(new ToolButton { Kind = ButtonKind.Color, Tip = "Color (scroll wheel = size)" });
         _toolButtons.Add(new ToolButton { Kind = ButtonKind.Undo, Tip = "Undo (Ctrl+Z)" });
         _toolButtons.Add(new ToolButton { Kind = ButtonKind.Redo, Tip = "Redo (Ctrl+Y)" });
+        void St(RedactStyle s, string tip) => _redactButtons.Add(new ToolButton { Kind = ButtonKind.RedactStyle, Option = (int)s, Tip = tip });
+        void Sh(RedactShape s, string tip) => _redactButtons.Add(new ToolButton { Kind = ButtonKind.RedactShape, Option = (int)s, Tip = tip });
+        Sh(RedactShape.Brush, "Brush (F switches shape, scroll = width)");
+        Sh(RedactShape.Box, "Box (F switches shape)");
+        St(RedactStyle.Black, "Black (always secure)");
+        St(RedactStyle.Pixelate, "Pixelate (Ctrl+scroll = cell size)");
+        St(RedactStyle.Blur, "Blur (Ctrl+scroll = blur size)");
+        _redactButtons.Add(new ToolButton { Kind = ButtonKind.RedactSecure, Tip = "" });
+        UpdateSecureButton();
+        for (int i = 0; i < EmojiFont.Set.Length; i++)
+            _emojiButtons.Add(new ToolButton { Kind = ButtonKind.EmojiPick, Option = i, Tip = "" });
         _actionButtons.Add(new ToolButton { Kind = ButtonKind.Copy, Tip = "Copy (Ctrl+C)" });
         _actionButtons.Add(new ToolButton { Kind = ButtonKind.Save, Tip = "Save as (Ctrl+S)" });
         _actionButtons.Add(new ToolButton { Kind = ButtonKind.Close, Tip = "Close (Esc)" });
@@ -181,6 +228,34 @@ internal sealed class OverlayForm : Form
         if (px < mon.Left) px = _toolBar.Right + gap;
         int py = Math.Clamp(colorBtn.Top, mon.Top, Math.Max(mon.Top, mon.Bottom - ph));
         _paletteRect = new Rectangle(px, py, pw, ph);
+
+        // Redact options sit beside the Redact button, on the side away from the selection.
+        var redactBtn = _toolButtons.First(x => x.Kind == ButtonKind.Tool && x.Tool == Tool.Redact).Rect;
+        var sep = S(8);
+        var readoutW = TextRenderer.MeasureText("48 px", LabelFont).Width + S(10);
+        var rw = _redactButtons.Count * b + 2 * sep + pad * 2 + readoutW;
+        int rx = _toolBar.Right <= sel.Left + S(1) ? _toolBar.Left - gap - rw : _toolBar.Right + gap;
+        if (rx + rw > mon.Right) rx = _toolBar.Left - gap - rw;
+        if (rx < mon.Left) rx = _toolBar.Right + gap;
+        _redactBar = new Rectangle(rx, redactBtn.Top - pad, rw, b + pad * 2);
+        for (int i = 0; i < _redactButtons.Count; i++)
+        {
+            var group = _redactButtons[i].Kind switch { ButtonKind.RedactStyle => 1, ButtonKind.RedactSecure => 2, _ => 0 };
+            _redactButtons[i].Rect = new Rectangle(rx + pad + i * b + group * sep, redactBtn.Top, b, b);
+        }
+        // Emoji picker grid beside the Emoji button, same side rule as the redact bar.
+        var emojiBtn = _toolButtons.First(x => x.Kind == ButtonKind.Tool && x.Tool == Tool.Emoji).Rect;
+        var rowsE = (_emojiButtons.Count + EmojiColumns - 1) / EmojiColumns;
+        int ew = EmojiColumns * b + pad * 2, eh = rowsE * b + pad * 2;
+        int ex = _toolBar.Right <= sel.Left + S(1) ? _toolBar.Left - gap - ew : _toolBar.Right + gap;
+        if (ex + ew > mon.Right) ex = _toolBar.Left - gap - ew;
+        if (ex < mon.Left) ex = _toolBar.Right + gap;
+        int ey = Math.Clamp(emojiBtn.Top - pad, mon.Top, Math.Max(mon.Top, mon.Bottom - eh));
+        _emojiPanel = new Rectangle(ex, ey, ew, eh);
+        for (int i = 0; i < _emojiButtons.Count; i++)
+            _emojiButtons[i].Rect = new Rectangle(ex + pad + i % EmojiColumns * b, ey + pad + i / EmojiColumns * b, b, b);
+
+        _cellReadout = Rectangle.FromLTRB(_redactButtons[^1].Rect.Right + S(2), redactBtn.Top, _redactBar.Right - pad, redactBtn.Bottom);
     }
 
     private Rectangle SwatchRect(int i)
@@ -210,6 +285,8 @@ internal sealed class OverlayForm : Form
         r = Rectangle.Union(r, Rectangle.Inflate(_toolBar, 2, 2));
         r = Rectangle.Union(r, Rectangle.Inflate(_actionBar, 2, 2));
         if (_paletteOpen) r = Rectangle.Union(r, Rectangle.Inflate(_paletteRect, 2, 2));
+        if (RedactBarVisible) r = Rectangle.Union(r, Rectangle.Inflate(_redactBar, 2, 2));
+        if (EmojiPanelVisible) r = Rectangle.Union(r, Rectangle.Inflate(_emojiPanel, 2, 2));
         if (!_tipRect.IsEmpty) r = Rectangle.Union(r, _tipRect);
         return r;
     }
@@ -226,14 +303,20 @@ internal sealed class OverlayForm : Form
 
     private void UpdateTipRect()
     {
-        if (_hoverButton == null) { _tipRect = Rectangle.Empty; return; }
+        if (_hoverButton == null || _hoverButton.Tip.Length == 0) { _tipRect = Rectangle.Empty; return; }
         var size = TextRenderer.MeasureText(_hoverButton.Tip, LabelFont);
         var w = size.Width + S(12);
         var h = size.Height + S(6);
         var b = _hoverButton.Rect;
         var mon = _selection is Rectangle sel ? MonitorOf(sel) : ClientRectangle;
         Rectangle r;
-        if (_toolButtons.Contains(_hoverButton))
+        if (_redactButtons.Contains(_hoverButton))
+        {
+            r = new Rectangle(b.X + (b.Width - w) / 2, _redactBar.Bottom + S(4), w, h);
+            if (r.Bottom > mon.Bottom) r.Y = _redactBar.Top - S(4) - h;
+            r.X = Math.Clamp(r.X, mon.Left, Math.Max(mon.Left, mon.Right - w));
+        }
+        else if (_toolButtons.Contains(_hoverButton))
         {
             r = new Rectangle(_toolBar.Right + S(6), b.Y + (b.Height - h) / 2, w, h);
             if (r.Right > mon.Right) r.X = _toolBar.Left - S(6) - w;
@@ -275,6 +358,7 @@ internal sealed class OverlayForm : Form
             foreach (var a in _annotations) a.Draw(g);
             _current?.Draw(g);
             if (_editing != null) DrawEditing(g, _editing);
+            if (_previewAt is Point at && _drag == Drag.None) DrawPreview(g, at);
             g.Restore(state);
             DrawChrome(g, sel);
         }
@@ -331,8 +415,22 @@ internal sealed class OverlayForm : Form
         if (_drag is Drag.NewSelection or Drag.Resize) return;
 
         g.SmoothingMode = SmoothingMode.AntiAlias;
+        Icons.CurrentEmoji = CurrentEmoji;
         DrawBar(g, _toolBar, _toolButtons);
+        if (EmojiPanelVisible) DrawBar(g, _emojiPanel, _emojiButtons);
         DrawBar(g, _actionBar, _actionButtons);
+        if (RedactBarVisible)
+        {
+            DrawBar(g, _redactBar, _redactButtons);
+            using var sp = new Pen(Color.FromArgb(90, 255, 255, 255), 1);
+            foreach (var kind in new[] { ButtonKind.RedactStyle, ButtonKind.RedactSecure })
+            {
+                var first = _redactButtons.First(x => x.Kind == kind).Rect;
+                g.DrawLine(sp, first.Left - S(4), _redactBar.Top + S(6), first.Left - S(4), _redactBar.Bottom - S(6));
+            }
+            var cellColor = _redactStyle == RedactStyle.Black ? Color.FromArgb(110, 110, 110) : Color.White;
+            TextRenderer.DrawText(g, CellText, LabelFont, _cellReadout, cellColor, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+        }
 
         if (_paletteOpen)
         {
@@ -360,10 +458,15 @@ internal sealed class OverlayForm : Form
         using (var bb = new SolidBrush(BarBack)) FillRound(g, bb, bar, S(5));
         foreach (var b in buttons)
         {
-            var active = b.Kind == ButtonKind.Tool && b.Tool == _tool || b.Kind == ButtonKind.Color && _paletteOpen;
+            var active = b.Kind == ButtonKind.Tool && b.Tool == _tool || b.Kind == ButtonKind.Color && _paletteOpen
+                || b.Kind == ButtonKind.RedactStyle && b.Option == (int)_redactStyle
+                || b.Kind == ButtonKind.RedactShape && b.Option == (int)_redactShape
+                || b.Kind == ButtonKind.RedactSecure
+                || b.Kind == ButtonKind.EmojiPick && b.Option == _emojiIndex;
             if (active || b == _hoverButton)
             {
-                using var hb = new SolidBrush(active ? Accent : Color.FromArgb(70, 255, 255, 255));
+                var fill = b.Kind == ButtonKind.RedactSecure && !_redactSecure ? Warning : active ? Accent : Color.FromArgb(70, 255, 255, 255);
+                using var hb = new SolidBrush(fill);
                 FillRound(g, hb, Rectangle.Inflate(b.Rect, -S(1), -S(1)), S(4));
             }
             var enabled = b.Kind switch
@@ -437,11 +540,13 @@ internal sealed class OverlayForm : Form
         if (_selection == null) return null;
         foreach (var b in _toolButtons) if (b.Rect.Contains(p)) return b;
         foreach (var b in _actionButtons) if (b.Rect.Contains(p)) return b;
+        if (RedactBarVisible) foreach (var b in _redactButtons) if (b.Rect.Contains(p)) return b;
+        if (EmojiPanelVisible) foreach (var b in _emojiButtons) if (b.Rect.Contains(p)) return b;
         return null;
     }
 
     private bool OnChrome(Point p) =>
-        _selection != null && (_toolBar.Contains(p) || _actionBar.Contains(p) || _paletteOpen && _paletteRect.Contains(p));
+        _selection != null && (_toolBar.Contains(p) || _actionBar.Contains(p) || _paletteOpen && _paletteRect.Contains(p) || RedactBarVisible && _redactBar.Contains(p) || EmojiPanelVisible && _emojiPanel.Contains(p));
 
     protected override void OnMouseDown(MouseEventArgs e)
     {
@@ -496,7 +601,13 @@ internal sealed class OverlayForm : Form
             }
             if (sel.Contains(p))
             {
-                if (_tool != Tool.None) { BeginDraw(p); return; }
+                if (_tool != Tool.None)
+                {
+                    InvalidatePreview();
+                    _previewAt = null;
+                    BeginDraw(p);
+                    return;
+                }
                 _drag = Drag.Move;
                 _dragOrigSel = sel;
                 return;
@@ -575,10 +686,29 @@ internal sealed class OverlayForm : Form
     protected override void OnMouseWheel(MouseEventArgs e)
     {
         base.OnMouseWheel(e);
-        // A redact box is always solid black, so a size change mid-drag would only confuse.
-        if (_drag == Drag.Draw && _current is BoxShape { Kind: BoxKind.Redact }) return;
+        if ((ModifierKeys & Keys.Control) != 0 && _tool == Tool.Redact)
+        {
+            var steps = RedactMark.CellSteps;
+            var idx = Math.Clamp(Array.IndexOf(steps, _redactCell) + Math.Sign(e.Delta), 0, steps.Length - 1);
+            InvalidatePreview();
+            _redactCell = steps[idx];
+            _settings.RedactCell = _redactCell;
+            if (_drag == Drag.Draw && _current is RedactMark live)
+            {
+                live.CellSize = _redactCell;
+                live.Changed();
+                InvalidateF(live.Bounds);
+            }
+            ShowBubble($"Cell {_redactCell} px", e.Location);
+            InvalidatePreview();
+            InvalidateChrome();
+            return;
+        }
+        // Brush width and box stay fixed mid-drag; changing them under the cursor would only confuse.
+        if (_drag == Drag.Draw && _current is RedactMark) return;
         var next = Math.Clamp(_size + Math.Sign(e.Delta), MinSize, MaxSize);
         if (next == _size && _bubble != null) return;
+        InvalidatePreview();
         _size = next;
         _settings.Size = _size;
         if (_editing != null)
@@ -595,7 +725,107 @@ internal sealed class OverlayForm : Form
             _currentBounds = now;
         }
         ShowBubble($"Size {_size}", e.Location);
+        InvalidatePreview();
         InvalidateChrome();
+    }
+
+    // ---------- Hover preview ----------
+
+    private Point? _previewAt;
+
+    // Diameter of what the active tool would stamp, or null when the tool has no meaningful preview.
+    private float? PreviewDiameter => _tool switch
+    {
+        Tool.Pen or Tool.Line or Tool.Arrow or Tool.Rectangle or Tool.Ellipse => _size,
+        Tool.Highlighter => _size * 4,
+        Tool.Number => (10 + _size * 2) * 2,
+        Tool.Emoji => EmojiMark.PixelsFor(_size) * 1.5f,
+        Tool.Redact when _redactShape == RedactShape.Brush => RedactMark.BrushWidthFor(_size),
+        Tool.Redact => _redactCell * 3,
+        _ => null,
+    };
+
+    private Rectangle PreviewRect(Point at)
+    {
+        var d = PreviewDiameter ?? 0;
+        var r = (int)Math.Ceiling(Math.Max(d, 6) / 2) + 4;
+        return new Rectangle(at.X - r, at.Y - r, r * 2, r * 2);
+    }
+
+    private void InvalidatePreview()
+    {
+        if (_previewAt is Point at) Invalidate(PreviewRect(at));
+    }
+
+    private void UpdatePreview(Point p, ToolButton? button)
+    {
+        Point? at = _selection is Rectangle sel && sel.Contains(p) && _drag == Drag.None && _editing == null
+            && PreviewDiameter != null && button == null && !OnChrome(p) && HitHandle(p) < 0 ? p : null;
+        if (at == _previewAt) return;
+        InvalidatePreview();
+        _previewAt = at;
+        InvalidatePreview();
+    }
+
+    protected override void OnMouseLeave(EventArgs e)
+    {
+        base.OnMouseLeave(e);
+        InvalidatePreview();
+        _previewAt = null;
+    }
+
+    private void DrawPreview(Graphics g, Point at)
+    {
+        if (PreviewDiameter is not float d) return;
+        if (_tool == Tool.Emoji)
+        {
+            new EmojiMark { Emoji = CurrentEmoji, Center = at, Size = _size, Opacity = 0.55f }.Draw(g);
+            return;
+        }
+        if (_tool == Tool.Number)
+        {
+            var n = _annotations.Count(a => a is NumberMark) + 1;
+            new NumberMark { Color = Color.FromArgb(140, _color), Size = _size, Center = at, Number = n }.Draw(g);
+            return;
+        }
+        d = Math.Max(d, 2);
+        var rect = new RectangleF(at.X - d / 2, at.Y - d / 2, d, d);
+        if (_tool == Tool.Redact)
+        {
+            DrawRedactPreview(g, at, rect);
+            return;
+        }
+        var fill = _tool == Tool.Redact ? Color.FromArgb(70, 128, 128, 128)
+            : _tool == Tool.Highlighter ? Color.FromArgb(Stroke.HighlighterAlpha, _color) : Color.FromArgb(150, _color);
+        using (var b = new SolidBrush(fill)) g.FillEllipse(b, rect);
+        // Dark-then-light dashed outline stays visible on any background.
+        using var dark = new Pen(Color.FromArgb(200, 0, 0, 0), 1);
+        using var light = new Pen(Color.FromArgb(230, 255, 255, 255), 1) { DashPattern = new[] { 3f, 3f } };
+        g.DrawEllipse(dark, rect);
+        g.DrawEllipse(light, rect);
+    }
+
+    // Brush: a circle of the brush width. Box: a 3x3-cell sample. Both show the cell grid at its real size.
+    private void DrawRedactPreview(Graphics g, Point at, RectangleF rect)
+    {
+        using var shape = new GraphicsPath();
+        if (_redactShape == RedactShape.Brush) shape.AddEllipse(rect);
+        else shape.AddRectangle(rect);
+        var state = g.Save();
+        g.SetClip(shape, CombineMode.Intersect);
+        using (var fill = new SolidBrush(Color.FromArgb(70, 128, 128, 128))) g.FillPath(fill, shape);
+        if (_redactStyle != RedactStyle.Black)
+        {
+            var c = _redactCell;
+            using var grid = new Pen(Color.FromArgb(150, 255, 255, 255), 1);
+            for (var x = (int)Math.Floor(rect.Left / c) * c; x <= rect.Right; x += c) g.DrawLine(grid, x, rect.Top, x, rect.Bottom);
+            for (var y = (int)Math.Floor(rect.Top / c) * c; y <= rect.Bottom; y += c) g.DrawLine(grid, rect.Left, y, rect.Right, y);
+        }
+        g.Restore(state);
+        using var dark = new Pen(Color.FromArgb(200, 0, 0, 0), 1);
+        using var light = new Pen(Color.FromArgb(230, 255, 255, 255), 1) { DashPattern = new[] { 3f, 3f } };
+        g.DrawPath(dark, shape);
+        g.DrawPath(light, shape);
     }
 
     private void UpdateHover(Point p)
@@ -619,6 +849,7 @@ internal sealed class OverlayForm : Form
             _hoverButton = button;
             InvalidateChrome();
         }
+        UpdatePreview(p, button);
         Cursor = CursorFor(p, button);
     }
 
@@ -686,6 +917,10 @@ internal sealed class OverlayForm : Form
                 InvalidateF(_editing.Bounds);
                 InvalidateChrome();
                 return;
+            case Tool.Emoji:
+                // Held until mouse-up: dragging rotates it around the click point, scrolling resizes it.
+                _current = new EmojiMark { Emoji = CurrentEmoji, Center = pt, Size = _size };
+                break;
             case Tool.Number:
                 // Held until mouse-up, so scrolling can resize it and moving can reposition it before it's placed.
                 var n = _annotations.Count(a => a is NumberMark) + 1;
@@ -703,9 +938,17 @@ internal sealed class OverlayForm : Form
                 break;
             case Tool.Rectangle:
             case Tool.Ellipse:
-            case Tool.Redact:
-                var kind = _tool switch { Tool.Rectangle => BoxKind.Rectangle, Tool.Ellipse => BoxKind.Ellipse, _ => BoxKind.Redact };
+                var kind = _tool == Tool.Rectangle ? BoxKind.Rectangle : BoxKind.Ellipse;
                 _current = new BoxShape { Color = _color, Size = _size, Rect = new RectangleF(pt, SizeF.Empty), Kind = kind };
+                break;
+            case Tool.Redact:
+                var mark = new RedactMark
+                {
+                    Source = _capture, Style = _redactStyle, Shape = _redactShape, Secure = _redactSecure, Seed = RedactMark.NewSeed(),
+                    BrushWidth = RedactMark.BrushWidthFor(_size), CellSize = _redactCell, Preview = true, Rect = new RectangleF(pt, SizeF.Empty),
+                };
+                if (_redactShape != RedactShape.Box) mark.Points.Add(pt);
+                _current = mark;
                 break;
         }
         _drag = Drag.Draw;
@@ -735,6 +978,25 @@ internal sealed class OverlayForm : Form
             case NumberMark m:
                 m.Center = pt;
                 break;
+            case EmojiMark em:
+            {
+                float dx = pt.X - em.Center.X, dy = pt.Y - em.Center.Y;
+                // A small dead zone so a plain click stamps it upright.
+                if (dx * dx + dy * dy < 100) break;
+                var angle = (float)(Math.Atan2(dx, -dy) * 180 / Math.PI);
+                em.Angle = shift ? MathF.Round(angle / 15) * 15 : angle;
+                break;
+            }
+            case RedactMark rm:
+                if (rm.Shape == RedactShape.Box) rm.Rect = Renderer.Box(_dragStart, pt, shift);
+                else
+                {
+                    var lp = rm.Points[^1];
+                    if (Math.Abs(lp.X - pt.X) < 2 && Math.Abs(lp.Y - pt.Y) < 2) return;
+                    rm.Points.Add(pt);
+                }
+                rm.Changed();
+                break;
         }
         var now = _current.Bounds;
         InvalidateF(RectangleF.Union(_currentBounds, now));
@@ -751,10 +1013,20 @@ internal sealed class OverlayForm : Form
         {
             LineShape l => Math.Abs(l.End.X - l.Start.X) + Math.Abs(l.End.Y - l.Start.Y) >= 2,
             BoxShape b => b.Rect.Width >= 2 && b.Rect.Height >= 2,
+            RedactMark m => m.Shape == RedactShape.Brush || !m.IsEmpty,
             _ => true,
         };
+        if (c is RedactMark rm)
+        {
+            rm.Preview = false;
+            rm.Changed();
+        }
         if (keep) Push(c);
-        else InvalidateF(_currentBounds);
+        else
+        {
+            InvalidateF(_currentBounds);
+            (c as IDisposable)?.Dispose();
+        }
     }
 
     private void Push(Annotation a)
@@ -811,6 +1083,7 @@ internal sealed class OverlayForm : Form
 
     private void SetTool(Tool t)
     {
+        InvalidatePreview();
         CommitText();
         _tool = t;
         InvalidateChrome();
@@ -840,6 +1113,29 @@ internal sealed class OverlayForm : Form
             case ButtonKind.Copy: Copy(); break;
             case ButtonKind.Save: SaveAs(); break;
             case ButtonKind.Close: Close(); break;
+            case ButtonKind.RedactStyle:
+                _redactStyle = (RedactStyle)b.Option;
+                _settings.RedactStyle = _redactStyle;
+                InvalidateChrome();
+                break;
+            case ButtonKind.RedactShape:
+                InvalidatePreview();
+                _redactShape = (RedactShape)b.Option;
+                _settings.RedactShape = _redactShape;
+                InvalidateChrome();
+                break;
+            case ButtonKind.EmojiPick:
+                InvalidatePreview();
+                _emojiIndex = b.Option;
+                _settings.EmojiIndex = _emojiIndex;
+                InvalidateChrome();
+                break;
+            case ButtonKind.RedactSecure:
+                _redactSecure = !_redactSecure;
+                _settings.RedactSecure = _redactSecure;
+                UpdateSecureButton();
+                InvalidateChrome();
+                break;
         }
     }
 
@@ -933,9 +1229,17 @@ internal sealed class OverlayForm : Form
             {
                 Keys.P => Tool.Pen, Keys.L => Tool.Line, Keys.A => Tool.Arrow, Keys.R => Tool.Rectangle,
                 Keys.E => Tool.Ellipse, Keys.H => Tool.Highlighter, Keys.T => Tool.Text, Keys.N => Tool.Number,
-                Keys.B => Tool.Redact, _ => null,
+                Keys.B => Tool.Redact, Keys.M => Tool.Emoji, _ => null,
             };
             if (t is Tool tool) { SetTool(_tool == tool ? Tool.None : tool); return true; }
+            if (key == Keys.F && _tool == Tool.Redact && _drag != Drag.Draw)
+            {
+                InvalidatePreview();
+                _redactShape = _redactShape == RedactShape.Box ? RedactShape.Brush : RedactShape.Box;
+                _settings.RedactShape = _redactShape;
+                InvalidateChrome();
+                return true;
+            }
 
             int dx = key == Keys.Left ? -1 : key == Keys.Right ? 1 : 0;
             int dy = key == Keys.Up ? -1 : key == Keys.Down ? 1 : 0;
@@ -1069,6 +1373,8 @@ internal sealed class OverlayForm : Form
         if (disposing)
         {
             _dimmed.Dispose();
+            foreach (var a in _annotations.Concat(_redo)) (a as IDisposable)?.Dispose();
+            (_current as IDisposable)?.Dispose();
             _capture.Dispose();
             _labelFont?.Dispose();
             _bubbleTimer?.Dispose();
