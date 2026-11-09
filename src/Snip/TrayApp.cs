@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 
 namespace Snip;
 
@@ -43,7 +43,7 @@ internal sealed class TrayApp : ApplicationContext
             _printScreenItem.Checked = _settings.PrintScreenEnabled;
         };
 
-        _tray = new NotifyIcon { Icon = _icon, Text = "Snip â€” Win+Shift+S or PrtSc", ContextMenuStrip = menu, Visible = true };
+        _tray = new NotifyIcon { Icon = _icon, Text = "Snip — Win+Shift+S or PrtSc", ContextMenuStrip = menu, Visible = true };
         _tray.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) Capture(); };
 
         _hook = new KeyboardHook(Capture) { PrintScreenEnabled = _settings.PrintScreenEnabled };
