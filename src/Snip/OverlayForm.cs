@@ -77,6 +77,8 @@ internal sealed class OverlayForm : Form
     private string? _bubble;
     private Rectangle _bubbleRect;
     private System.Windows.Forms.Timer? _bubbleTimer;
+    private bool _bubbleDot;
+    private readonly EscapeGuard _escape = new();
 
     public const int MinSize = 1, MaxSize = 20;
 
@@ -483,9 +485,10 @@ internal sealed class OverlayForm : Form
     private void DrawBubble(Graphics g)
     {
         using (var b = new SolidBrush(BarBack)) FillRound(g, b, _bubbleRect, S(4));
-        var dot = Math.Min(_size * 2 + 2, _bubbleRect.Height - S(6));
-        using (var db = new SolidBrush(_color))
-            g.FillEllipse(db, _bubbleRect.X + S(6), _bubbleRect.Y + (_bubbleRect.Height - dot) / 2f, dot, dot);
+        var dot = _bubbleDot ? Math.Min(_size * 2 + 2, _bubbleRect.Height - S(6)) : 0;
+        if (_bubbleDot)
+            using (var db = new SolidBrush(_color))
+                g.FillEllipse(db, _bubbleRect.X + S(6), _bubbleRect.Y + (_bubbleRect.Height - dot) / 2f, dot, dot);
         var textRect = Rectangle.FromLTRB(_bubbleRect.X + S(10) + dot, _bubbleRect.Y, _bubbleRect.Right, _bubbleRect.Bottom);
         TextRenderer.DrawText(g, _bubble, LabelFont, textRect, Color.White, TextFormatFlags.VerticalCenter | TextFormatFlags.Left);
     }
@@ -1151,15 +1154,18 @@ internal sealed class OverlayForm : Form
         }
     }
 
-    private void ShowBubble(string text, Point at)
+    private void ShowBubble(string text, Point at, bool dot = true, int ms = 900)
     {
         if (!_bubbleRect.IsEmpty) Invalidate(_bubbleRect);
         _bubble = text;
+        _bubbleDot = dot;
         var size = TextRenderer.MeasureText(text, LabelFont);
         var h = Math.Max(size.Height + S(8), S(28));
-        _bubbleRect = new Rectangle(at.X + S(18), at.Y + S(18), size.Width + S(22) + Math.Min(_size * 2 + 2, h - S(6)), h);
+        var dotW = dot ? Math.Min(_size * 2 + 2, h - S(6)) : 0;
+        _bubbleRect = new Rectangle(at.X + S(18), at.Y + S(18), size.Width + S(22) + dotW, h);
         Invalidate(_bubbleRect);
-        _bubbleTimer ??= new System.Windows.Forms.Timer { Interval = 900 };
+        _bubbleTimer ??= new System.Windows.Forms.Timer();
+        _bubbleTimer.Interval = ms;
         _bubbleTimer.Stop();
         _bubbleTimer.Tick -= HideBubble;
         _bubbleTimer.Tick += HideBubble;
@@ -1218,7 +1224,8 @@ internal sealed class OverlayForm : Form
         {
             if (_drag != Drag.None) CancelDrag();
             else if (_paletteOpen) { _paletteOpen = false; InvalidateChrome(); }
-            else Close();
+            else if (_escape.ShouldClose(_annotations.Count > 0, Environment.TickCount64)) Close();
+            else ShowBubble("Press Esc again to discard", PointToClient(MousePosition), dot: false, ms: (int)EscapeGuard.WindowMs);
             return true;
         }
         if (ctrl && key == Keys.C || key == Keys.Enter && !ctrl && !alt) { Copy(); return true; }

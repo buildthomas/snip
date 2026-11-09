@@ -78,7 +78,7 @@ commands as menu items with standard titles.
 8. Text: type, move by dragging its box, Return; emoji pick, size, rotate by dragging.
 9. Remapped App Shortcuts for Undo/Redo/Copy (System Settings > Keyboard > Keyboard Shortcuts > App Shortcuts) work
    in the overlay. ⌘C pastes into another app at full Retina resolution; ⌘S saves PNG/JPEG and reopens in the same folder next time.
-10. Esc closes; a second capture works; memory settles back after closing (Activity Monitor).
+10. Esc closes (with annotations: a hint, then a second Esc within 1.5 s closes); a second capture works; memory settles back after closing (Activity Monitor).
 11. Start at login toggles and survives a log out/in; `./uninstall.sh` leaves nothing behind.
 
 ## Things most likely to need fixing
