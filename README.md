@@ -3,6 +3,8 @@
 A small, private screenshot + annotation tool for Windows, built as a trustworthy replacement for Lightshot.
 It runs in the tray, never touches the network, and the whole thing is a few hundred lines of C# you can read.
 
+![Snip overlay with a selection, annotations and the toolbars](docs/screenshot.png)
+
 ## Using it
 
 Press **Win+Shift+S** or **PrtSc** (or left-click the tray icon). The screen freezes and dims instantly, so open
@@ -65,4 +67,5 @@ powershell -File tests\e2e\Timing.ps1 -Exe <Snip.exe>                         # 
 ```
 
 Set `SNIP_TRACE=1` to log capture timings to `%APPDATA%\Snip\snip.log`. Errors are always logged there (never key data).
-`tools\make-icon.ps1` regenerates the icon.
+`tools\make-icon.ps1` regenerates the icon. `dotnet run --project tools/DemoShot -- docs/screenshot.png` regenerates the
+README screenshot from a synthetic backdrop (it never reads the real screen).

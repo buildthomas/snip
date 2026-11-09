@@ -248,10 +248,10 @@ internal sealed class OverlayForm : Form
 
     protected override void OnPaintBackground(PaintEventArgs e) { }
 
-    protected override void OnPaint(PaintEventArgs e)
+    protected override void OnPaint(PaintEventArgs e) => Render(e.Graphics, e.ClipRectangle);
+
+    internal void Render(Graphics g, Rectangle clip)
     {
-        var g = e.Graphics;
-        var clip = e.ClipRectangle;
         g.CompositingMode = CompositingMode.SourceCopy;
         g.InterpolationMode = InterpolationMode.NearestNeighbor;
         g.PixelOffsetMode = PixelOffsetMode.None;
@@ -404,6 +404,18 @@ internal sealed class OverlayForm : Form
             new Point(r.Left, r.Top), new Point(cx, r.Top), new Point(r.Right, r.Top), new Point(r.Right, cy),
             new Point(r.Right, r.Bottom), new Point(cx, r.Bottom), new Point(r.Left, r.Bottom), new Point(r.Left, cy),
         };
+    }
+
+    // Puts the overlay in a given state without input, for rendering the README screenshot.
+    internal void SetDemoState(Rectangle selection, IEnumerable<Annotation> annotations, Tool tool, bool hoverActiveTool)
+    {
+        _selection = selection;
+        _annotations.Clear();
+        _annotations.AddRange(annotations);
+        _tool = tool;
+        LayoutChrome(selection);
+        _hoverButton = hoverActiveTool ? _toolButtons.First(b => b.Kind == ButtonKind.Tool && b.Tool == tool) : null;
+        UpdateTipRect();
     }
 
     // ---------- Mouse ----------

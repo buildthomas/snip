@@ -29,6 +29,7 @@
   <ItemGroup>
     <EmbeddedResource Include="snip.ico" LogicalName="snip.ico" />
     <InternalsVisibleTo Include="Snip.Tests" />
+    <InternalsVisibleTo Include="DemoShot" />
     <!-- Snip never touches the network; keep the SDK's implicit HTTP import out. -->
     <Using Remove="System.Net.Http" />
   </ItemGroup>
