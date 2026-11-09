@@ -1,7 +1,16 @@
-# Snip
+<p align="center">
+  <img src="docs/logo.png" width="96" height="96" alt="Snip logo">
+</p>
 
-A small, private screenshot + annotation tool for Windows, built as a trustworthy replacement for Lightshot.
-It runs in the tray, never touches the network, and the whole thing is a few hundred lines of C# you can read.
+<h1 align="center">Snip</h1>
+
+<p align="center">
+  <b>Screenshot and annotate on Windows. Private, instant, tiny.</b><br>
+  Win+Shift+S or PrtSc &middot; no network access &middot; ~400 KB &middot; 0% CPU when idle
+</p>
+
+A trustworthy replacement for Lightshot. It runs in the tray, never touches the network, and the whole thing is a
+few hundred lines of C# you can read.
 
 ![Snip overlay with a selection, annotations and the toolbars](docs/screenshot.png)
 
@@ -67,5 +76,13 @@ powershell -File tests\e2e\Timing.ps1 -Exe <Snip.exe>                         # 
 ```
 
 Set `SNIP_TRACE=1` to log capture timings to `%APPDATA%\Snip\snip.log`. Errors are always logged there (never key data).
-`tools\make-icon.ps1` regenerates the icon. `dotnet run --project tools/DemoShot -- docs/screenshot.png` regenerates the
-README screenshot from a synthetic backdrop (it never reads the real screen).
+`dotnet run --project tools/DemoShot -- docs/screenshot.png` regenerates the README screenshot from a synthetic
+backdrop (it never reads the real screen).
+
+The icon comes from `tools/IconGen` (design `scissors-sideways-purple`):
+
+```powershell
+dotnet run --project tools/IconGen -- ico scissors-sideways-purple src/Snip/snip.ico
+dotnet run --project tools/IconGen -- png scissors-sideways-purple 256 docs/logo.png
+dotnet run --project tools/IconGen -- preview-scissors sheet.png      # compare shapes and colours
+```
