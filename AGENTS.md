@@ -79,6 +79,9 @@ This file is the rulebook for agents writing or reviewing changes.
 
 - `global.json` pins the .NET 10 SDK. `nuget.config` supplies nuget.org in case the machine has no NuGet source set up.
 - Release publish is framework-dependent single-file (~0.5 MB): `dotnet publish src/Snip -c Release -o artifacts/publish`.
+- Shortcuts created from an agent's tool environment can be ignored by Start (it never lists them), while the same
+  `install.ps1` run from the user's own terminal works. When checking Start menu or install behaviour, have the
+  user run the installer themselves before concluding anything is broken.
 - `tools/install.ps1` builds, installs to `%LOCALAPPDATA%\Programs\Snip` (with a copy of `uninstall.ps1`), adds the
   Start menu shortcut and the per-user `HKCU\...\Uninstall\Snip` entry, and starts it. `tools/uninstall.ps1` is what
   Settings > Installed apps runs; it must keep removing everything the installer adds, and stay ASCII (Windows
