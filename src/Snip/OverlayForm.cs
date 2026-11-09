@@ -7,7 +7,7 @@ namespace Snip;
 // Full-virtual-screen window showing the frozen capture. Client coordinates equal capture-bitmap pixels.
 internal sealed class OverlayForm : Form
 {
-    private enum Drag { None, Pending, NewSelection, Move, Resize, Draw }
+    private enum Drag { None, Pending, NewSelection, Move, Resize, Draw, MoveText }
 
     private static readonly Color Accent = Color.FromArgb(0, 150, 255);
     private static readonly Color BarBack = Color.FromArgb(240, 32, 32, 34);
@@ -26,6 +26,7 @@ internal sealed class OverlayForm : Form
     private Rectangle _dragOrigSel;
     private int _resizeHandle;
     private Rectangle? _selectionBeforeDrag;
+    private PointF _textGrab, _textOriginBeforeMove;
 
     private readonly List<Annotation> _annotations = new();
     private readonly Stack<Annotation> _redo = new();
@@ -582,9 +583,15 @@ internal sealed class OverlayForm : Form
 
         if (_editing != null)
         {
-            var wasOn = _editing.Bounds.Contains(p);
+            // Dragging the box of the note being typed moves it; clicking anywhere else finishes it.
+            if (_editing.Bounds.Contains(p))
+            {
+                _drag = Drag.MoveText;
+                _textOriginBeforeMove = _editing.Origin;
+                _textGrab = new PointF(p.X - _editing.Origin.X, p.Y - _editing.Origin.Y);
+                return;
+            }
             CommitText();
-            if (wasOn) return;
         }
 
         _dragStart = p;
@@ -652,6 +659,9 @@ internal sealed class OverlayForm : Form
                 return;
             case Drag.Draw:
                 UpdateDraw(p);
+                return;
+            case Drag.MoveText:
+                MoveEditingText(new PointF(p.X - _textGrab.X, p.Y - _textGrab.Y));
                 return;
         }
     }
@@ -856,6 +866,7 @@ internal sealed class OverlayForm : Form
     private Cursor CursorFor(Point p, ToolButton? button)
     {
         if (button != null || OnChrome(p)) return Cursors.Hand;
+        if (_editing != null && _editing.Bounds.Contains(p)) return Cursors.SizeAll;
         var h = HitHandle(p);
         if (h >= 0) return h switch { 0 or 4 => Cursors.SizeNWSE, 2 or 6 => Cursors.SizeNESW, 1 or 5 => Cursors.SizeNS, _ => Cursors.SizeWE };
         if (_selection is Rectangle sel && sel.Contains(p))
@@ -871,6 +882,7 @@ internal sealed class OverlayForm : Form
             _current = null;
         }
         else if (_drag is Drag.Move or Drag.Resize) SetSelection(_dragOrigSel);
+        else if (_drag == Drag.MoveText) MoveEditingText(_textOriginBeforeMove);
         else if (_drag == Drag.NewSelection)
         {
             var dragged = _selection;
@@ -1278,6 +1290,17 @@ internal sealed class OverlayForm : Form
         var room = MaxNoteLength - _editing.Text.Length;
         if (room <= 0) return;
         SetEditingText(_editing.Text + (s.Length > room ? s[..room] : s));
+    }
+
+    private void MoveEditingText(PointF origin)
+    {
+        if (_editing == null) return;
+        if (_selection is Rectangle sel)
+            origin = new PointF(Math.Clamp(origin.X, sel.Left, Math.Max(sel.Left, sel.Right - 4)),
+                Math.Clamp(origin.Y, sel.Top, Math.Max(sel.Top, sel.Bottom - 4)));
+        var before = _editing.Bounds;
+        _editing.Origin = origin;
+        InvalidateF(RectangleF.Union(before, _editing.Bounds));
     }
 
     private void SetEditingText(string text)

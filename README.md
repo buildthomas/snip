@@ -38,7 +38,8 @@ menus, tooltips and hover states stay in the picture.
 | Rectangle | R | | Emoji stamp | M |
 | Ellipse | E | | Redact | B |
 
-Text: click to place, type, **Enter** to finish, **Shift+Enter** for a new line, **Ctrl+V** pastes text.
+Text: click to place, type, **Enter** to finish, **Shift+Enter** for a new line, **Ctrl+V** pastes text. While you're
+still typing, drag the text by its dashed box to move it (right-click while dragging puts it back).
 
 Numbered steps and emoji are placed when you release the mouse button: scroll to resize while holding. Emoji come in
 full colour from Windows' own Segoe UI Emoji font; pick one from the grid next to the tool, and drag while holding the

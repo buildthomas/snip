@@ -124,7 +124,7 @@ internal sealed class BoxShape : Annotation
 
 internal sealed class TextNote : Annotation
 {
-    public PointF Origin { get; init; }
+    public PointF Origin { get; set; }
     public string Text { get; set; } = "";
 
     public float FontPx => 8 + Size * 3;
