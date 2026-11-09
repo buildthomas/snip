@@ -29,7 +29,7 @@ Tray menu: capture, use PrintScreen key (on/off), start with Windows (on/off), o
 
 ## Install
 
-Needs the [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0) (x64) and, to build, the .NET 8 SDK.
+Needs the [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0) (x64) and, to build, the .NET 10 SDK.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\install.ps1
