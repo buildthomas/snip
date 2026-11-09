@@ -7,7 +7,7 @@ product decisions go to the owner). This file covers what's specific to `mac/`.
 ## Status
 
 First attempt, written without access to a Mac: it compiles and `SnipCore` passes its unit tests on GitHub Actions
-(`.github/workflows/mac.yml`, Apple silicon runner), but **no UI has been exercised yet**. Expect bugs in the
+(`.github/workflows/mac.yml`, Apple silicon `macos-latest` runner), but **no UI has been exercised yet**. Expect bugs in the
 overlay, coordinates on multi-display or mixed-scale setups, the hotkey and permissions. Fix them here.
 
 ## Layout
