@@ -95,6 +95,9 @@ Windows 10 and 11 ship different emoji designs (11 uses Fluent, some single-colo
 - `%APPDATA%\Snip\snip.log`: lifecycle events and errors only, capped at 256 KB. Capture timings only with
   `SNIP_TRACE=1`.
 - `HKCU\...\Run\Snip`: written only by the installed copy, re-applied at each start so it follows the exe.
+- Written by `tools/install.ps1`, removed by `uninstall.ps1`: `%LOCALAPPDATA%\Programs\Snip` (`Snip.exe` and a copy
+  of `uninstall.ps1`), the Start menu shortcut, and `HKCU\...\Uninstall\Snip`, which lists Snip under Settings >
+  Apps > Installed apps with the uninstall script as its uninstall command.
 - Nothing else is written. No temp files, no caches on disk.
 
 ## Security model

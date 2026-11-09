@@ -70,9 +70,16 @@ which includes the Desktop Runtime that Snip runs on.
 powershell -ExecutionPolicy Bypass -File tools\install.ps1
 ```
 
-This builds `Snip.exe` (~0.5 MB), copies it to `%LOCALAPPDATA%\Programs\Snip` and starts it. The installed copy
-registers itself under `HKCU\...\Run` (your user only, no admin); copies run from anywhere else never touch
-autostart. `tools\uninstall.ps1` removes everything.
+This builds `Snip.exe` (~0.5 MB), copies it to `%LOCALAPPDATA%\Programs\Snip`, adds **Snip** to the Start menu and
+to **Settings > Apps > Installed apps**, and starts it. Everything is per-user; no admin rights needed. The installed
+copy registers itself to start with Windows (`HKCU\...\Run`); copies run from anywhere else never touch autostart.
+
+**Starting Snip again.** If you exit Snip from the tray or turn off *Start with Windows*, start it from the Start menu
+(search "Snip"). Turn autostart back on from the tray menu's *Start with Windows*. When Snip is already running,
+launching it again from Start takes a screenshot.
+
+**Uninstall** from Settings > Apps > Installed apps > Snip > Uninstall, or run `tools\uninstall.ps1`. Both remove the
+app, its Start menu entry, autostart, the Installed apps entry and its settings.
 
 ## Privacy and footprint
 

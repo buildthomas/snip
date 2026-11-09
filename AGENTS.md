@@ -33,7 +33,7 @@ This file is the rulebook for agents writing or reviewing changes.
   palette (quantiles), the colours just outside the shape and randomness, never where things were.
   `SecureStyles_DependOnlyOnColourDistribution_NotOnWhereThingsAre` must keep passing. Black is always secure.
   Redactions must stay visibly redactions (contrast floor) and be flattened into the output.
-- **Only the installed copy touches autostart** (`HKCU\...\Run`), per-user, never admin.
+- **Only the installed copy touches autostart** (`HKCU\...\Run`), per-user, never admin. Installs stay per-user too.
 - **P/Invoke DLLs load from System32 only** (`DefaultDllImportSearchPaths` in `Native.cs`). Keep it.
 - **Errors are shown, never swallowed.** Copy, save and capture failures tell the user; `Application.ThreadException`
   only logs as a last resort.
@@ -79,8 +79,10 @@ This file is the rulebook for agents writing or reviewing changes.
 
 - `global.json` pins the .NET 10 SDK. `nuget.config` supplies nuget.org in case the machine has no NuGet source set up.
 - Release publish is framework-dependent single-file (~0.5 MB): `dotnet publish src/Snip -c Release -o artifacts/publish`.
-- `tools/install.ps1` builds, installs to `%LOCALAPPDATA%\Programs\Snip` and starts it; `tools/uninstall.ps1` removes
-  everything.
+- `tools/install.ps1` builds, installs to `%LOCALAPPDATA%\Programs\Snip` (with a copy of `uninstall.ps1`), adds the
+  Start menu shortcut and the per-user `HKCU\...\Uninstall\Snip` entry, and starts it. `tools/uninstall.ps1` is what
+  Settings > Installed apps runs; it must keep removing everything the installer adds, and stay ASCII (Windows
+  PowerShell 5.1 reads it as ANSI).
 
 ## PR review checklist
 
