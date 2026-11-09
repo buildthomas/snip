@@ -113,3 +113,8 @@ dotnet run --project tools/IconGen -- ico scissors-sideways-purple src/Snip/snip
 dotnet run --project tools/IconGen -- png scissors-sideways-purple 256 docs/logo.png
 dotnet run --project tools/IconGen -- preview-scissors sheet.png      # compare shapes and colours
 ```
+
+## License
+
+[MIT](LICENSE). Snip bundles no third-party code or assets; emoji are drawn at runtime from the Segoe UI Emoji font
+that ships with Windows.
