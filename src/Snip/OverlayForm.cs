@@ -585,6 +585,13 @@ internal sealed class OverlayForm : Form
             _editing.Size = _size;
             InvalidateF(RectangleF.Union(before, _editing.Bounds));
         }
+        if (_drag == Drag.Draw && _current != null)
+        {
+            _current.Size = _size;
+            var now = _current.Bounds;
+            InvalidateF(RectangleF.Union(_currentBounds, now));
+            _currentBounds = now;
+        }
         ShowBubble($"Size {_size}", e.Location);
         InvalidateChrome();
     }
