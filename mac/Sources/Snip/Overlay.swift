@@ -819,7 +819,7 @@ final class OverlayView: NSView {
         case .color: paletteOpen.toggle()
         case .undo: undo()
         case .redo: redoLast()
-        case .copy: copy()
+        case .copy: copyToClipboard()
         case .save: saveAs()
         case .close: session?.close(reason: "close button")
         case .redactStyle:
@@ -845,7 +845,7 @@ final class OverlayView: NSView {
         let code = event.keyCode
 
         if let note = editing {
-            if cmd && key == "c" { commitText(); copy(); return }
+            if cmd && key == "c" { commitText(); copyToClipboard(); return }
             if cmd && key == "s" { commitText(); saveAs(); return }
             if cmd && key == "z" { if note.text.isEmpty { undo() } else { note.text = Geometry.trimWord(note.text) }; needsDisplay = true; return }
             if cmd && key == "v" {
@@ -871,7 +871,7 @@ final class OverlayView: NSView {
             else { session?.close(reason: "escape") }
             return
         }
-        if (cmd && key == "c") || (code == 36 && !cmd) { copy(); return }
+        if (cmd && key == "c") || (code == 36 && !cmd) { copyToClipboard(); return }
         if cmd && key == "s" { saveAs(); return }
         if cmd && key == "z" { if shift { redoLast() } else { undo() }; return }
         if cmd && key == "y" { redoLast(); return }
@@ -924,7 +924,7 @@ final class OverlayView: NSView {
         return ctx.makeImage()
     }
 
-    private func copy() {
+    private func copyToClipboard() {
         let start = DispatchTime.now()
         guard let image = compose() else { return }
         let rep = NSBitmapImageRep(cgImage: image)
