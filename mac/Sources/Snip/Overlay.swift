@@ -864,6 +864,7 @@ final class OverlayView: NSView, NSMenuItemValidation {
         if code == 53 {
             if drag != .none { cancelDrag() }
             else if paletteOpen { paletteOpen = false; needsDisplay = true }
+            else if tool != .none && selection != nil { setTool(.none) }
             else if escape.shouldClose(hasAnnotations: !annotations.isEmpty, nowMs: Int64(ProcessInfo.processInfo.systemUptime * 1000)) {
                 session?.close(reason: "escape")
             } else {

@@ -1,4 +1,4 @@
-# Esc closes at once with nothing drawn; with annotations it needs a second Esc within 1.5 s.
+# Esc first deselects the tool; then it closes at once with nothing drawn, or needs a second Esc within 1.5 s with annotations.
 # Drives the real mouse and keyboard. Usage: powershell -STA -File tests\e2e\EscGuard.ps1 -Exe <Snip.exe> -OutDir <dir>
 param(
     [Parameter(Mandatory)] [string] $Exe,
@@ -34,6 +34,11 @@ Expect-Closed 'single Esc with nothing drawn'
 Open-Overlay
 [In]::Tap(0x52); [In]::Drag($x0 + 40, $y0 + 40, $x0 + 240, $y0 + 160)
 Esc
+Expect-Open 'Esc deselects the rectangle tool'
+[In]::Drag($x0 + 300, $y0 + 300, $x0 + 350, $y0 + 330)
+Shot 'esc-moved.png'
+Expect-Open 'dragging inside the selection with no tool'
+Esc
 Expect-Open 'first Esc with a rectangle drawn'
 Shot 'esc-hint.png'
 Start-Sleep -Milliseconds 1800
@@ -46,6 +51,8 @@ Open-Overlay
 [In]::Tap(0x52); [In]::Drag($x0 + 40, $y0 + 40, $x0 + 240, $y0 + 160)
 [In]::Key(0x11,$false); [In]::Tap(0x5A); [In]::Key(0x11,$true)
 Esc
+Expect-Open 'Esc deselects the tool after undo'
+Esc
 Expect-Closed 'single Esc after undoing everything'
 
 Open-Overlay
@@ -53,6 +60,8 @@ Open-Overlay
 [In]::Tap(0x41); [In]::Tap(0x42)
 Esc
 Expect-Open 'Esc while typing commits the text'
+Esc
+Expect-Open 'Esc deselects the text tool'
 Esc
 Expect-Open 'first Esc after committed text'
 Esc

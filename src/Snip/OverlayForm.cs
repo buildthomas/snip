@@ -1224,6 +1224,7 @@ internal sealed class OverlayForm : Form
         {
             if (_drag != Drag.None) CancelDrag();
             else if (_paletteOpen) { _paletteOpen = false; InvalidateChrome(); }
+            else if (_tool != Tool.None && _selection != null) SetTool(Tool.None);
             else if (_escape.ShouldClose(_annotations.Count > 0, Environment.TickCount64)) Close();
             else ShowBubble("Press Esc again to discard", PointToClient(MousePosition), dot: false, ms: (int)EscapeGuard.WindowMs);
             return true;
