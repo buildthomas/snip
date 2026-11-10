@@ -29,7 +29,7 @@ picture.
 | Undo / redo | **Ctrl+Z** / **Ctrl+Y** | **⌘Z** / **⇧⌘Z** (or your own App Shortcuts) |
 | Select the whole display | **Ctrl+A** | **⌘A** |
 | Redact cell size | **Ctrl+scroll** | **Option+scroll** |
-| Cancel | **Esc** or right-click | **Esc** or right-click |
+| Put the tool away, then close (asks for a second Esc once you've drawn something) | **Esc** or right-click | **Esc** or right-click |
 
 - **Drag** to select a region, or **click** a window to select exactly that window. Drag the handles to resize, drag
   inside to move, arrow keys nudge (Shift+arrows resize).
@@ -168,6 +168,7 @@ Windows end-to-end scripts (they drive the real mouse and keyboard, except Timin
 ```powershell
 powershell -STA -File tests\e2e\E2E.ps1 -Exe <Snip.exe> -OutDir <dir>        # main flow
 powershell -STA -File tests\e2e\Scenarios.ps1 -Exe <Snip.exe> -OutDir <dir>  # menus, window click, save dialog
+powershell -STA -File tests\e2e\EscGuard.ps1 -Exe <Snip.exe> -OutDir <dir>  # Esc twice to discard annotations
 powershell -File tests\e2e\Timing.ps1 -Exe <Snip.exe>                         # overlay latency, no input needed
 ```
 

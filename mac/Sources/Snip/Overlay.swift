@@ -121,6 +121,7 @@ final class OverlayView: NSView, NSMenuItemValidation {
     private var previewAt: CGPoint?
     private var scrollAccum: CGFloat = 0
     private var bubble: (text: String, at: CGPoint, until: Date)?
+    private var escape = EscapeGuard()
 
     private static let accent = NSColor(srgbRed: 0, green: 0.59, blue: 1, alpha: 1)
     private static let barBack = NSColor(srgbRed: 0.125, green: 0.125, blue: 0.133, alpha: 0.94)
@@ -657,10 +658,10 @@ final class OverlayView: NSView, NSMenuItemValidation {
         showBubble("Size \(size)", at)
     }
 
-    private func showBubble(_ text: String, _ at: CGPoint) {
-        bubble = (text, at, Date().addingTimeInterval(0.9))
+    private func showBubble(_ text: String, _ at: CGPoint, seconds: Double = 0.9) {
+        bubble = (text, at, Date().addingTimeInterval(seconds))
         needsDisplay = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in self?.needsDisplay = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds + 0.1) { [weak self] in self?.needsDisplay = true }
     }
 
     // MARK: - Selection and drawing
@@ -863,7 +864,13 @@ final class OverlayView: NSView, NSMenuItemValidation {
         if code == 53 {
             if drag != .none { cancelDrag() }
             else if paletteOpen { paletteOpen = false; needsDisplay = true }
-            else { session?.close(reason: "escape") }
+            else if tool != .none && selection != nil { setTool(.none) }
+            else if escape.shouldClose(hasAnnotations: !annotations.isEmpty, nowMs: Int64(ProcessInfo.processInfo.systemUptime * 1000)) {
+                session?.close(reason: "escape")
+            } else {
+                let at = convert(window?.mouseLocationOutsideOfEventStream ?? .zero, from: nil)
+                showBubble("Press Esc again to discard", at, seconds: Double(EscapeGuard.windowMs) / 1000)
+            }
             return
         }
         if code == 36 && !cmd { copyToClipboard(); return }
