@@ -179,6 +179,7 @@ internal sealed class OverlayForm : Form
         UpdateSecureButton();
         for (int i = 0; i < EmojiFont.Set.Length; i++)
             _emojiButtons.Add(new ToolButton { Kind = ButtonKind.EmojiPick, Option = i, Tip = "" });
+        _actionButtons.Add(new ToolButton { Kind = ButtonKind.Record, Tip = "Record video of this area" });
         _actionButtons.Add(new ToolButton { Kind = ButtonKind.Copy, Tip = "Copy (Ctrl+C)" });
         _actionButtons.Add(new ToolButton { Kind = ButtonKind.Save, Tip = "Save as (Ctrl+S)" });
         _actionButtons.Add(new ToolButton { Kind = ButtonKind.Close, Tip = "Close (Esc)" });
@@ -476,6 +477,7 @@ internal sealed class OverlayForm : Form
             {
                 ButtonKind.Undo => _annotations.Count > 0 || _editing != null,
                 ButtonKind.Redo => _redo.Count > 0,
+                ButtonKind.Record => _annotations.Count == 0 && _editing == null,
                 _ => true,
             };
             Icons.Draw(g, b, _color, enabled);
@@ -1125,6 +1127,7 @@ internal sealed class OverlayForm : Form
             case ButtonKind.Color: _paletteOpen = !_paletteOpen; InvalidateChrome(); break;
             case ButtonKind.Undo: Undo(); break;
             case ButtonKind.Redo: Redo(); break;
+            case ButtonKind.Record: RequestRecording(); break;
             case ButtonKind.Copy: Copy(); break;
             case ButtonKind.Save: SaveAs(); break;
             case ButtonKind.Close: Close(); break;
@@ -1336,6 +1339,22 @@ internal sealed class OverlayForm : Form
     }
 
     // ---------- Output ----------
+
+    /// Raised with the selection in screen coordinates when the user asks to record it; the overlay then closes.
+    public event Action<Rectangle>? RecordRequested;
+
+    private void RequestRecording()
+    {
+        if (_selection is not Rectangle sel || sel.Width <= 0 || sel.Height <= 0) return;
+        if (_annotations.Count > 0 || _editing != null)
+        {
+            ShowBubble("Recording uses the live screen - undo your drawings first", PointToClient(MousePosition), dot: false, ms: 2500);
+            return;
+        }
+        sel.Offset(Left, Top);
+        RecordRequested?.Invoke(sel);
+        Close();
+    }
 
     private Bitmap? Compose() =>
         _selection is Rectangle sel && sel.Width > 0 && sel.Height > 0 ? Renderer.Compose(_capture, sel, _annotations) : null;

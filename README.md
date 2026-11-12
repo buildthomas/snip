@@ -73,6 +73,18 @@ The redact bar appears next to the tool: **Brush · Box | Black · Pixelate · B
 
 Every redaction is flattened into the copied or saved image; there is no hidden layer to remove.
 
+### Record a video (Windows for now)
+
+Select an area, then press the red **Record** button in the action bar. A thin red border marks what's being
+recorded, and a small bar next to it shows the time with **Stop** and **Discard**; press the capture hotkey again to
+stop too. The pointer is included, sound isn't, and there's no time limit.
+
+When you stop, a window shows the last frame, the length and the file size: **Copy** puts the MP4 on the clipboard as
+a file (paste it into a chat or an email), **Save as...** writes it where you like, **Play** opens it in your video
+player, **Discard** deletes it. Recordings are H.264 MP4s encoded on the graphics card where possible, so the CPU
+stays nearly idle, and they're small: about 0.5-1.5 MB for 10 seconds of a 2560x1440 screen. Record works before you
+draw anything; annotations aren't part of videos yet.
+
 ### Tray and menu-bar menus
 
 - **Windows tray:** Capture, Use PrintScreen key (on/off), Start with Windows (on/off), Open settings folder, Exit.
@@ -131,7 +143,9 @@ Security > Screen Recording); after granting it, quit Snip from its menu and ope
 ## Privacy and footprint
 
 - No network code at all, on either platform. Images only go to the clipboard or to a file you pick.
-- Settings are the only thing stored: `%APPDATA%\Snip\settings.json` on Windows, the `com.buildthomas.snip`
+- Recordings are kept in `%TEMP%\Snip` only until you save or discard them (a copied recording stays there so it
+  can be pasted); leftovers are removed when Snip starts.
+- Settings are the only other thing stored: `%APPDATA%\Snip\settings.json` on Windows, the `com.buildthomas.snip`
   `defaults` domain on macOS (last save folder, color, size, tool options, toggles).
 - Logs record lifecycle events, timings and errors, never typed text or screen content: `%APPDATA%\Snip\snip.log`
   (Windows; timings with `SNIP_TRACE=1`) and `~/Library/Logs/Snip/snip.log` (macOS).

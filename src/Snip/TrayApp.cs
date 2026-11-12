@@ -14,6 +14,8 @@ internal sealed class TrayApp : ApplicationContext
     private readonly ToolStripMenuItem _startupItem;
     private readonly ToolStripMenuItem _printScreenItem;
     private OverlayForm? _overlay;
+    private RecordingController? _recording;
+    private Rectangle? _pendingRecording;
 
     public TrayApp(EventWaitHandle captureSignal, bool captureNow)
     {
@@ -56,6 +58,7 @@ internal sealed class TrayApp : ApplicationContext
         SystemEvents.SessionSwitch += OnSessionSwitch;
         SystemEvents.PowerModeChanged += OnPowerModeChanged;
 
+        RecordingFiles.CleanUp();
         if (captureNow) _ui.Post(_ => Capture(), null);
     }
 
@@ -78,6 +81,11 @@ internal sealed class TrayApp : ApplicationContext
 
     public void Capture()
     {
+        if (_recording != null)
+        {
+            _recording.Stop();
+            return;
+        }
         if (_overlay != null)
         {
             _overlay.Activate();
@@ -107,6 +115,7 @@ internal sealed class TrayApp : ApplicationContext
             _tray.ShowBalloonTip(4000, "Snip", $"Capture failed: {ex.Message}", ToolTipIcon.Warning);
             return;
         }
+        _overlay.RecordRequested += area => _pendingRecording = area;
         _overlay.Shown += (_, _) => Log.Trace($"overlay shown: capture {tCapture} ms, windows {tWindows} ms, form {tForm} ms, shown {sw.ElapsedMilliseconds} ms");
         _overlay.FormClosed += (_, e) =>
         {
@@ -120,8 +129,31 @@ internal sealed class TrayApp : ApplicationContext
             GC.Collect();
             GC.WaitForPendingFinalizers();
             _hook.Reinstall();
+            if (_pendingRecording is Rectangle area)
+            {
+                _pendingRecording = null;
+                StartRecordingSoon(area);
+            }
         };
         _overlay.Show();
+    }
+
+    // Give the compositor a moment to remove the overlay so it never appears in the first frame.
+    private void StartRecordingSoon(Rectangle area)
+    {
+        var delay = new System.Windows.Forms.Timer { Interval = 150 };
+        delay.Tick += (_, _) =>
+        {
+            delay.Dispose();
+            _recording = RecordingController.Start(area, _settings);
+            if (_recording != null)
+                _recording.Ended += () =>
+                {
+                    _recording = null;
+                    _hook.Reinstall();
+                };
+        };
+        delay.Start();
     }
 
     private void ToggleStartup()

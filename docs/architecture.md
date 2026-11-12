@@ -69,6 +69,25 @@ macOS:   hotkey event ─► Capture.captureAll (SCScreenshotManager per display
   working set is not force-trimmed: paging the hook's code back in on the next keystroke risks Windows silently
   removing the hook.
 
+## Screen recording (Windows)
+
+```
+Record button ─► overlay closes ─► 150 ms ─► ScreenRecorder (own thread) ─► MP4 in %TEMP%\Snip ─► RecordingResultForm
+```
+
+- **Capture:** DXGI Desktop Duplication, one duplication per display the area touches (all on one adapter). Changed
+  frames are copied on the GPU into an accumulation texture; `AcquireNextFrame` blocks until something changes, so a
+  still screen costs nothing.
+- **Encode:** Media Foundation sink writer with a DXGI device manager, so the hardware H.264 encoder takes GPU textures
+  directly (colour conversion also on the GPU). Quality-based rate control, High profile, a keyframe every 10 s.
+  Without a usable GPU path it falls back to copying frames to memory (higher CPU, same file).
+- **Frames:** at most 30 per second and only when the screen or pointer changed, plus one per second to keep players
+  happy. The pointer is drawn into each frame with GDI (`GetDC` on the texture).
+- **Chrome:** the border strips and the Stop bar are excluded from capture (`WDA_EXCLUDEFROMCAPTURE`) and never take
+  focus. The capture hotkey stops a running recording.
+- **Limits:** up to roughly 4K per side (H.264 levels), no rotated displays, no sound. Recording stops by itself when
+  less than 1 GB of disk space is left.
+
 ## Hotkeys
 
 ### Windows
@@ -154,7 +173,8 @@ macOS:
 - Written by `mac/install.sh`, removed by `mac/uninstall.sh`: `~/Applications/Snip.app`; the uninstaller also removes
   the login item, settings, logs and the Screen Recording permission entry.
 
-Nothing else is written on either platform. No temp files, no caches on disk.
+Nothing else is written on either platform, apart from Windows recordings in `%TEMP%\Snip` (deleted on Save or
+Discard, leftovers on the next start). No caches on disk.
 
 ## Security model
 

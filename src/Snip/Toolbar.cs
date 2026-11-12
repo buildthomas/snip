@@ -2,7 +2,7 @@ using System.Drawing.Drawing2D;
 
 namespace Snip;
 
-internal enum ButtonKind { Tool, Color, Undo, Redo, Copy, Save, Close, RedactStyle, RedactShape, RedactSecure, EmojiPick }
+internal enum ButtonKind { Tool, Color, Undo, Redo, Copy, Save, Close, RedactStyle, RedactShape, RedactSecure, EmojiPick, Record }
 
 internal sealed class ToolButton
 {
@@ -64,6 +64,11 @@ internal static class Icons
             case ButtonKind.Redo: Glyph(g, "", "↷", r, fg); return;
             case ButtonKind.Copy: Glyph(g, "", "⧉", r, fg); return;
             case ButtonKind.Save: Glyph(g, "", "S", r, fg); return;
+            case ButtonKind.Record:
+                using (var rb = new SolidBrush(enabled ? Color.FromArgb(230, 40, 40) : Color.FromArgb(110, 60, 60)))
+                    g.FillEllipse(rb, cx - u * 0.75f, cy - u * 0.75f, u * 1.5f, u * 1.5f);
+                g.DrawEllipse(pen, cx - u, cy - u, u * 2, u * 2);
+                return;
             case ButtonKind.Close: Glyph(g, "", "✕", r, fg); return;
         }
 
