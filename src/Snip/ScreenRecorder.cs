@@ -56,6 +56,8 @@ internal sealed unsafe class ScreenRecorder
     private AudioCapture? _audio;
     private uint _audioStream;
     private long _startTimestamp;
+    private int _audioPeak;
+    internal int AudioPeak => _audioPeak;
 
     private ScreenRecorder(Rectangle rect, string path, bool systemSound, bool microphone)
     {
@@ -129,6 +131,7 @@ internal sealed unsafe class ScreenRecorder
         {
             _audio.Stop(_lastTimestamp * AudioMixer.Rate / 10_000_000);
             if (_audio.Error != null) _stopReason ??= $"Sound: {_audio.Error}";
+            Log.Trace($"audio peak {_audioPeak}");
         }
         try
         {
@@ -311,6 +314,7 @@ internal sealed unsafe class ScreenRecorder
     private void WriteAudio(short[] pcm, long firstFrame)
     {
         if (pcm.Length == 0) return;
+        foreach (var v in pcm) _audioPeak = Math.Max(_audioPeak, Math.Abs((int)v));
         var len = pcm.Length * 2;
         IntPtr buffer = IntPtr.Zero, sample = IntPtr.Zero;
         try
@@ -392,6 +396,7 @@ internal sealed unsafe class ScreenRecorder
     {
         var problem = RecordingMath.SizeProblem(_rect);
         if (problem != null) throw new InvalidOperationException(problem);
+        var sw = Stopwatch.StartNew();
 
         var iidFactory = IID_IDXGIFactory1;
         Check(CreateDXGIFactory1(&iidFactory, out var factory), "set up screen recording");
@@ -453,6 +458,7 @@ internal sealed unsafe class ScreenRecorder
             Release(ref adapter);
         }
         if (_gpu) _gpu = TrySetUpGpuEncoding();
+        Log.Trace($"recording setup: device {sw.ElapsedMilliseconds} ms");
         foreach (var s in _sources)
             if (!TryDuplicate(s)) throw new InvalidOperationException("Windows refused screen recording right now. Try again in a moment.");
 
@@ -468,9 +474,12 @@ internal sealed unsafe class ScreenRecorder
             _accum = accum;
         }
 
+        Log.Trace($"recording setup: duplication {sw.ElapsedMilliseconds} ms");
         if (_systemSound || _microphone) _audio = AudioCapture.Create(_systemSound, _microphone);
+        Log.Trace($"recording setup: audio {sw.ElapsedMilliseconds} ms");
         Check(MFStartup(0x0002_0070, 1 /* LITE: no sockets */), "start the video encoder");
         _mfStarted = true;
+        Log.Trace($"recording setup: MF startup {sw.ElapsedMilliseconds} ms");
         try
         {
             InitEncoder();
@@ -483,6 +492,7 @@ internal sealed unsafe class ScreenRecorder
             _gpu = false;
             InitEncoder();
         }
+        Log.Trace($"recording setup: encoder {sw.ElapsedMilliseconds} ms");
         Log.Write($"recording started: {_rect.Width}x{_rect.Height} at {_rect.X},{_rect.Y}, {_sources.Count} display(s), " +
             $"{(_gpu ? "GPU" : "CPU")} path, system sound {(_systemSound ? "on" : "off")}, microphone {(_microphone ? "on" : "off")}");
     }

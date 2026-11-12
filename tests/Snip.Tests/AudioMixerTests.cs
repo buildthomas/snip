@@ -31,6 +31,19 @@ public class AudioMixerTests
         Assert.Equal(32767, (int)pcm[4]);
     }
 
+    [Theory]
+    [InlineData(10_000_000L)]
+    [InlineData(3_579_545L)]
+    [InlineData(24_000_000L)]
+    public void FrameAt_StaysExactAfterDaysOfUptime(long ticksPerSecond)
+    {
+        var start = ticksPerSecond * 60 * 60 * 24 * 30;
+        var startIn100ns = (ulong)(60L * 60 * 24 * 30 * 10_000_000);
+        Assert.Equal(0, AudioCapture.FrameAt(startIn100ns, start, ticksPerSecond));
+        Assert.Equal(48_000, AudioCapture.FrameAt(startIn100ns + 10_000_000, start, ticksPerSecond));
+        Assert.Equal(-4_800, AudioCapture.FrameAt(startIn100ns - 1_000_000, start, ticksPerSecond));
+    }
+
     [Fact]
     public void LateAudioIsDroppedNotShifted()
     {

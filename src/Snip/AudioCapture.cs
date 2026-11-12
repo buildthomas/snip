@@ -51,6 +51,7 @@ internal sealed unsafe class AudioCapture
         public IntPtr Client, Capture;
         public long NextFrame = -1;
         public bool Dead;
+        public long Packets, Frames, SilentPackets, FirstAt = long.MinValue;
     }
 
     private readonly List<Source> _sources = new();
@@ -147,7 +148,11 @@ internal sealed unsafe class AudioCapture
             if (pcm.Length > 0) _sink?.Invoke(pcm, first);
         }
         catch (Exception ex) { Error ??= ex.Message; }
-        foreach (var s in _sources) if (s.Client != IntPtr.Zero) Call(s.Client, 11);
+        foreach (var s in _sources)
+        {
+            if (s.Client != IntPtr.Zero) Call(s.Client, 11);
+            Log.Trace($"audio {s.Name}: {s.Packets} packets ({s.SilentPackets} silent), {s.Frames} frames, first at frame {s.FirstAt}, mixer at {_mixer.Written}, end {endFrame}");
+        }
     }
 
     public void Release()
@@ -213,6 +218,9 @@ internal sealed unsafe class AudioCapture
                 Check(((delegate* unmanaged[Stdcall]<IntPtr, float**, uint*, uint*, ulong*, ulong*, int>)Slot(s.Capture, 3))(
                     s.Capture, &data, &frames, &flags, &devicePos, &qpc), s.Name);
                 var first = Place(s, qpc, frames, (flags & 0x4 /* TIMESTAMP_ERROR */) != 0);
+                s.Packets++; s.Frames += frames;
+                if ((flags & 0x2) != 0) s.SilentPackets++;
+                if (s.FirstAt == long.MinValue) s.FirstAt = first;
                 if ((flags & 0x2 /* SILENT */) == 0 && frames > 0)
                     _mixer.Add(new ReadOnlySpan<float>(data, (int)frames * AudioMixer.Channels), first);
                 Call(s.Capture, 4, frames);
@@ -223,11 +231,18 @@ internal sealed unsafe class AudioCapture
     // Timestamps are in 100 ns QPC units; small jitter snaps to the end of the previous packet to avoid clicks.
     private long Place(Source s, ulong qpc100ns, uint frames, bool timestampError)
     {
-        var start100ns = _startTimestamp * 10_000_000 / Stopwatch.Frequency;
-        var at = timestampError && s.NextFrame >= 0 ? s.NextFrame : ((long)qpc100ns - start100ns) * AudioMixer.Rate / 10_000_000;
+        var at = timestampError && s.NextFrame >= 0 ? s.NextFrame : FrameAt(qpc100ns, _startTimestamp, Stopwatch.Frequency);
         if (s.NextFrame >= 0 && Math.Abs(at - s.NextFrame) <= AudioMixer.Rate / 500) at = s.NextFrame;
         s.NextFrame = at + frames;
         return at;
+    }
+
+    /// Timeline frame of a packet stamped in 100 ns QPC units; the start is a raw QPC tick count. Converted without
+    /// multiplying the raw counter, which overflows after a day or two of uptime.
+    public static long FrameAt(ulong qpc100ns, long startTicks, long ticksPerSecond)
+    {
+        var start100ns = startTicks / ticksPerSecond * 10_000_000 + startTicks % ticksPerSecond * 10_000_000 / ticksPerSecond;
+        return ((long)qpc100ns - start100ns) * AudioMixer.Rate / 10_000_000;
     }
 
     private static void AccessCheck(int hr, int flow)
