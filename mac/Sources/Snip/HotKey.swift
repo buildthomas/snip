@@ -3,32 +3,30 @@ import Foundation
 import SnipCore
 
 /// Global hotkey via Carbon's RegisterEventHotKey: needs no Accessibility or Input Monitoring permission and only
-/// ever sees its own key combination, never other keystrokes.
+/// ever sees its own key combinations, never other keystrokes.
 final class HotKey {
-    static var onPress: (() -> Void)?
+    private static var handlers: [UInt32: () -> Void] = [:]
+    private static var handlerRef: EventHandlerRef?
+    private let id: UInt32
     private var hotKeyRef: EventHotKeyRef?
-    private var handlerRef: EventHandlerRef?
+
+    init(id: UInt32, onPress: @escaping () -> Void) {
+        self.id = id
+        Self.handlers[id] = onPress
+    }
 
     @discardableResult
     func register(_ spec: HotkeySpec) -> Bool {
         unregister()
-        if handlerRef == nil {
-            var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-            let status = InstallEventHandler(GetApplicationEventTarget(), { _, _, _ in
-                Log.debug("hotkey pressed")
-                DispatchQueue.main.async { HotKey.onPress?() }
-                return noErr
-            }, 1, &eventType, nil, &handlerRef)
-            if status != noErr { Log.error("InstallEventHandler failed: \(status)") }
-        }
-        let id = EventHotKeyID(signature: OSType(0x534E_4950), id: 1)
+        Self.installHandler()
         guard spec.hasRequiredModifier else {
             Log.error("refusing hotkey without Command/Option/Control: \(spec.spec)")
             return false
         }
-        let status = RegisterEventHotKey(spec.keyCode, spec.carbonModifiers, id, GetApplicationEventTarget(), 0, &hotKeyRef)
+        let hotKeyID = EventHotKeyID(signature: OSType(0x534E_4950), id: id)
+        let status = RegisterEventHotKey(spec.keyCode, spec.carbonModifiers, hotKeyID, GetApplicationEventTarget(), 0, &hotKeyRef)
         if status == noErr {
-            Log.info("hotkey registered: \(spec.spec) (\(spec.display))")
+            Log.info("hotkey \(id) registered: \(spec.spec) (\(spec.display))")
             return true
         }
         // -9878 (eventHotKeyExistsErr): another app or a system shortcut already owns this combination.
@@ -39,5 +37,20 @@ final class HotKey {
     func unregister() {
         if let ref = hotKeyRef { UnregisterEventHotKey(ref) }
         hotKeyRef = nil
+    }
+
+    private static func installHandler() {
+        guard handlerRef == nil else { return }
+        var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+        let status = InstallEventHandler(GetApplicationEventTarget(), { _, event, _ in
+            var pressed = EventHotKeyID()
+            GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), nil,
+                              MemoryLayout<EventHotKeyID>.size, nil, &pressed)
+            let id = pressed.id
+            Log.debug("hotkey \(id) pressed")
+            DispatchQueue.main.async { HotKey.handlers[id]?() }
+            return noErr
+        }, 1, &eventType, nil, &handlerRef)
+        if status != noErr { Log.error("InstallEventHandler failed: \(status)") }
     }
 }

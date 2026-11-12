@@ -17,6 +17,8 @@ public struct HotkeySpec: Equatable {
     public static let carbonControl: UInt32 = 1 << 12
 
     public static let defaultSpec = HotkeySpec(keyCode: 0x13, command: true, shift: true, option: false, control: false)
+    /// Recording: the default capture hotkey plus Option (⌥⇧⌘2).
+    public static let defaultRecordSpec = HotkeySpec(keyCode: 0x13, command: true, shift: true, option: true, control: false)
 
     public init(keyCode: UInt32, command: Bool, shift: Bool, option: Bool, control: Bool, keyLabel: String? = nil) {
         self.keyCode = keyCode

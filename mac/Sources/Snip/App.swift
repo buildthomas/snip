@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import ServiceManagement
 import SnipCore
 
@@ -9,10 +10,15 @@ let hotkeyChangedNotification = Notification.Name("com.buildthomas.snip.hotkeyCh
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
-    private let hotKey = HotKey()
+    private lazy var hotKey = HotKey(id: 1) { [weak self] in self?.capture(trigger: "hotkey") }
+    private lazy var recordHotKey = HotKey(id: 2) { [weak self] in self?.record(trigger: "hotkey") }
     private var session: OverlaySession?
+    private var recordSelect: RecordSelectSession?
+    private var recording: RecordingController?
     private var capturing = false
     private var hotkeyInfoItem: NSMenuItem!
+    private var recordItem: NSMenuItem!
+    private var recordHotkeyInfoItem: NSMenuItem!
     private let recorder = HotkeyRecorder()
     private var loginItem: NSMenuItem!
     private var debugItem: NSMenuItem!
@@ -26,15 +32,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = buildMenu()
         NSApp.mainMenu = buildMainMenu()
 
-        HotKey.onPress = { [weak self] in self?.capture(trigger: "hotkey") }
+        RecordingFiles.cleanUp()
         if !hotKey.register(Settings.shared.hotkey) {
             notify("Snip couldn't register \(Settings.shared.hotkey.display). Another app or a macOS shortcut (System Settings > Keyboard > Keyboard Shortcuts) probably uses it. Pick another one with Change hotkey in the Snip menu.")
         }
+        if !recordHotKey.register(Settings.shared.recordHotkey) {
+            Log.info("record hotkey \(Settings.shared.recordHotkey.display) unavailable; Record video stays in the menu")
+        }
         DistributedNotificationCenter.default().addObserver(forName: hotkeyChangedNotification, object: nil, queue: .main) { [weak self] _ in
             guard let self else { return }
-            let spec = Settings.shared.hotkey
-            Log.info("hotkey changed from the command line: \(spec.spec)")
+            let spec = Settings.shared.hotkey, record = Settings.shared.recordHotkey
+            Log.info("hotkeys changed from the command line: \(spec.spec), record \(record.spec)")
             if !self.hotKey.register(spec) { self.notify("Snip couldn't register \(spec.display); it may be taken by another app or a macOS shortcut.") }
+            if !self.recordHotKey.register(record) { self.notify("Snip couldn't register \(record.display); it may be taken by another app or a macOS shortcut.") }
         }
 
         DistributedNotificationCenter.default().addObserver(forName: captureNotification, object: nil, queue: .main) { [weak self] _ in
@@ -51,12 +61,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func buildMenu() -> NSMenu {
         let menu = NSMenu()
         menu.addItem(withTitle: "Capture", action: #selector(captureFromMenu), keyEquivalent: "").target = self
+        recordItem = NSMenuItem(title: "Record video", action: #selector(recordFromMenu), keyEquivalent: "")
+        recordItem.target = self
+        menu.addItem(recordItem)
         menu.addItem(.separator())
 
         hotkeyInfoItem = NSMenuItem(title: "Hotkey: \(Settings.shared.hotkey.display)", action: nil, keyEquivalent: "")
         hotkeyInfoItem.isEnabled = false
         menu.addItem(hotkeyInfoItem)
         menu.addItem(withTitle: "Change hotkey…", action: #selector(changeHotkey), keyEquivalent: "").target = self
+        recordHotkeyInfoItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        recordHotkeyInfoItem.isEnabled = false
+        menu.addItem(recordHotkeyInfoItem)
+        menu.addItem(withTitle: "Change record hotkey…", action: #selector(changeRecordHotkey), keyEquivalent: "").target = self
 
         loginItem = NSMenuItem(title: "Start at login", action: #selector(toggleLogin), keyEquivalent: "")
         loginItem.target = self
@@ -77,21 +94,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { self.capture(trigger: "menu") }
     }
 
+    @objc private func recordFromMenu() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { self.record(trigger: "menu") }
+    }
+
     @objc private func changeHotkey() {
-        let old = Settings.shared.hotkey
-        // Unregistered while recording, so pressing the current hotkey can be recorded instead of triggering a capture.
-        hotKey.unregister()
+        changeHotkey(hotKey, current: Settings.shared.hotkey, other: Settings.shared.recordHotkey) { Settings.shared.hotkey = $0 }
+    }
+
+    @objc private func changeRecordHotkey() {
+        changeHotkey(recordHotKey, current: Settings.shared.recordHotkey, other: Settings.shared.hotkey) { Settings.shared.recordHotkey = $0 }
+    }
+
+    private func changeHotkey(_ key: HotKey, current old: HotkeySpec, other: HotkeySpec, save: @escaping (HotkeySpec) -> Void) {
+        // Unregistered while recording, so pressing the current hotkey can be recorded instead of triggering it.
+        key.unregister()
         recorder.show(current: old) { [weak self] spec in
             guard let self else { return }
             guard let spec, spec != old else {
-                self.hotKey.register(old)
+                key.register(old)
                 return
             }
-            if self.hotKey.register(spec) {
-                Settings.shared.hotkey = spec
+            if spec == other {
+                key.register(old)
+                self.notify("\(spec.display) is Snip's other hotkey. Kept \(old.display).")
+            } else if key.register(spec) {
+                save(spec)
                 Log.info("hotkey changed to \(spec.spec)")
             } else {
-                self.hotKey.register(old)
+                key.register(old)
                 self.notify("\(spec.display) is already used by another app or a macOS shortcut (System Settings > Keyboard > Keyboard Shortcuts). Kept \(old.display).")
             }
         }
@@ -157,6 +188,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Capture
 
     func capture(trigger: String) {
+        if let recording {
+            recording.stop()
+            return
+        }
+        if let recordSelect {
+            recordSelect.show()
+            return
+        }
         if let session {
             Log.debug("capture (\(trigger)) while overlay open: focusing it")
             session.show()
@@ -185,6 +224,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 notify("Capture failed: \(error.localizedDescription)")
             }
         }
+    }
+
+    // MARK: - Recording
+
+    /// Record hotkey: pick an area over the live screen, or stop the recording that's running.
+    func record(trigger: String) {
+        if let recording {
+            recording.stop()
+            return
+        }
+        if let recordSelect {
+            recordSelect.show()
+            return
+        }
+        if let session {
+            session.show()
+            return
+        }
+        Log.info("record requested (\(trigger))")
+        guard Capture.hasPermission || Capture.requestPermission() else {
+            notify("Snip needs Screen Recording permission. Allow it in System Settings > Privacy & Security > Screen Recording, then quit and reopen Snip.")
+            return
+        }
+        let s = RecordSelectSession()
+        s.onClose = { [weak self] in self?.recordSelect = nil }
+        s.onRecord = { [weak self] screen, area in self?.startRecording(screen: screen, area: area) }
+        recordSelect = s
+        s.show()
+    }
+
+    private func startRecording(screen: NSScreen, area: CGRect) {
+        guard Settings.shared.recordMicrophone else { beginRecording(screen: screen, area: area); return }
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            beginRecording(screen: screen, area: area)
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { granted in
+                DispatchQueue.main.async {
+                    if granted { self.beginRecording(screen: screen, area: area) } else { self.notifyMicrophoneDenied() }
+                }
+            }
+        default:
+            notifyMicrophoneDenied()
+        }
+    }
+
+    private func notifyMicrophoneDenied() {
+        notify("Snip isn't allowed to use the microphone. Allow it in System Settings > Privacy & Security > Microphone, or turn the microphone off for recordings.")
+    }
+
+    private func beginRecording(screen: NSScreen, area: CGRect) {
+        let url: URL
+        do { url = try RecordingFiles.newURL() } catch {
+            notify("Couldn't start recording.\n\n\(error.localizedDescription)")
+            return
+        }
+        let recorder = ScreenRecorder(screen: screen, area: area, url: url, systemSound: Settings.shared.recordSystemSound,
+                                      microphone: Settings.shared.recordMicrophone)
+        let controller = RecordingController(recorder: recorder)
+        controller.onEnded = { [weak self] in self?.recording = nil }
+        recording = controller
+        controller.start()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        recording?.abort()
+        RecordingResultWindow.discardAllOnQuit()
     }
 
     // MARK: - Helpers
@@ -219,6 +325,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 extension AppDelegate: NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) {
         hotkeyInfoItem.title = "Hotkey: \(Settings.shared.hotkey.display)"
+        recordHotkeyInfoItem.title = "Record hotkey: \(Settings.shared.recordHotkey.display)"
+        recordItem.title = recording == nil ? "Record video" : "Stop recording"
         loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
         debugItem.state = Settings.shared.debugLogging ? .on : .off
     }

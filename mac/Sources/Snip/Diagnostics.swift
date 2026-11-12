@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import ServiceManagement
 
 /// Plain-text environment report for debugging without access to the machine: `Snip --diagnostics`.
@@ -13,6 +14,8 @@ enum Diagnostics {
         lines.append("bundle id: \(Bundle.main.bundleIdentifier ?? "(none: not running from an .app bundle)")")
         lines.append("screen recording permission: \(Capture.hasPermission ? "granted" : "NOT granted")")
         lines.append("hotkey: \(Settings.shared.hotkey.display) (\(Settings.shared.hotkey.spec))")
+        lines.append("record hotkey: \(Settings.shared.recordHotkey.display) (\(Settings.shared.recordHotkey.spec))")
+        lines.append("microphone permission: \(microphoneStatus())")
         lines.append("start at login: \(loginStatus())")
         lines.append("debug logging: \(Log.debugEnabled)")
         lines.append("log file: \(Log.file.path)")
@@ -21,6 +24,15 @@ enum Diagnostics {
         }
         lines.append("--- end diagnostics ---")
         return lines.joined(separator: "\n")
+    }
+
+    private static func microphoneStatus() -> String {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized: return "granted"
+        case .notDetermined: return "not asked yet"
+        case .denied, .restricted: return "NOT granted"
+        @unknown default: return "unknown"
+        }
     }
 
     private static func loginStatus() -> String {

@@ -17,7 +17,7 @@ final class Settings {
         d.register(defaults: [
             "colorHex": "E62828", "size": 4, "redactStyle": RedactStyle.pixelate.rawValue, "redactShape": RedactShape.brush.rawValue,
             "redactCell": 12, "redactSecure": true, "emojiIndex": 0,
-            "debugLogging": true, "loginItemInitialized": false,
+            "debugLogging": true, "loginItemInitialized": false, "recordSystemSound": false, "recordMicrophone": false,
         ])
     }
 
@@ -61,6 +61,22 @@ final class Settings {
             d.removeObject(forKey: "hotkey")
         }
     }
+    /// The record hotkey; same storage scheme as `hotkey`, under "record…" keys.
+    var recordHotkey: HotkeySpec {
+        get {
+            guard d.object(forKey: "recordHotkeyKeyCode") != nil else { return .defaultRecordSpec }
+            return HotkeySpec(keyCode: UInt32(d.integer(forKey: "recordHotkeyKeyCode")),
+                              carbonModifiers: UInt32(d.integer(forKey: "recordHotkeyModifiers")),
+                              keyLabel: d.string(forKey: "recordHotkeyLabel"))
+        }
+        set {
+            d.set(Int(newValue.keyCode), forKey: "recordHotkeyKeyCode")
+            d.set(Int(newValue.carbonModifiers), forKey: "recordHotkeyModifiers")
+            d.set(newValue.keyLabel, forKey: "recordHotkeyLabel")
+        }
+    }
+    var recordSystemSound: Bool { get { d.bool(forKey: "recordSystemSound") } set { d.set(newValue, forKey: "recordSystemSound") } }
+    var recordMicrophone: Bool { get { d.bool(forKey: "recordMicrophone") } set { d.set(newValue, forKey: "recordMicrophone") } }
     var lastSaveDirectory: URL? {
         get { d.string(forKey: "lastSaveDirectory").map { URL(fileURLWithPath: $0) } }
         set { d.set(newValue?.path, forKey: "lastSaveDirectory") }
