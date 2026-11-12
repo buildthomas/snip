@@ -45,6 +45,48 @@ public class AudioMixerTests
     }
 
     [Fact]
+    public void Timeline_FirstPacketGoesWhereItsStampSays()
+    {
+        Assert.Equal((11_328L, 0), AudioTimeline.Place(-1, 11_328, 480));
+    }
+
+    [Fact]
+    public void Timeline_ABurstWithTheSameStampIsLaidOutInSequence()
+    {
+        long next = -1, stamp = 50_000;
+        var starts = new List<long>();
+        for (int i = 0; i < 8; i++)
+        {
+            var (at, skip) = AudioTimeline.Place(next, stamp, 480);
+            Assert.Equal(0, skip);
+            starts.Add(at);
+            next = at + 480;
+        }
+        Assert.Equal(Enumerable.Range(0, 8).Select(i => 50_000L + i * 480), starts);
+    }
+
+    [Fact]
+    public void Timeline_JitterIsIgnored()
+    {
+        Assert.Equal((10_480L, 0), AudioTimeline.Place(10_480, 10_480 + 700, 480));
+        Assert.Equal((10_480L, 0), AudioTimeline.Place(10_480, 10_480 - 3_000, 480));
+    }
+
+    [Fact]
+    public void Timeline_ARealGapLeavesSilence()
+    {
+        Assert.Equal((200_000L, 0), AudioTimeline.Place(10_480, 200_000, 480));
+    }
+
+    [Fact]
+    public void Timeline_FarBehindDropsTheOverlapInsteadOfStacking()
+    {
+        var (at, skip) = AudioTimeline.Place(100_000, 100_000 - AudioTimeline.DriftFrames - 100, 480);
+        Assert.Equal(100_000, at);
+        Assert.Equal(480, skip);
+    }
+
+    [Fact]
     public void LateAudioIsDroppedNotShifted()
     {
         var m = new AudioMixer();

@@ -40,6 +40,21 @@ internal sealed class AudioMixer
     }
 }
 
+/// Packets follow on from the previous one (the burst after silence shares one stamp and would otherwise stack);
+/// the stamp only wins for a real gap, or for large drift, where the part that would overlap is dropped.
+internal static class AudioTimeline
+{
+    public const long GapFrames = AudioMixer.Rate * 30 / 1000;
+    public const long DriftFrames = AudioMixer.Rate / 5;
+
+    public static (long At, int Skip) Place(long nextFrame, long stampedFrame, int frames)
+    {
+        if (nextFrame < 0 || stampedFrame > nextFrame + GapFrames) return (stampedFrame, 0);
+        if (stampedFrame < nextFrame - DriftFrames) return (nextFrame, (int)Math.Min(frames, nextFrame - stampedFrame));
+        return (nextFrame, 0);
+    }
+}
+
 /// System sound (WASAPI loopback of the default output) and/or the default microphone, as 48 kHz stereo.
 internal sealed unsafe class AudioCapture
 {
@@ -217,24 +232,21 @@ internal sealed unsafe class AudioCapture
                 ulong devicePos, qpc;
                 Check(((delegate* unmanaged[Stdcall]<IntPtr, float**, uint*, uint*, ulong*, ulong*, int>)Slot(s.Capture, 3))(
                     s.Capture, &data, &frames, &flags, &devicePos, &qpc), s.Name);
-                var first = Place(s, qpc, frames, (flags & 0x4 /* TIMESTAMP_ERROR */) != 0);
+                var raw = (flags & 0x4 /* TIMESTAMP_ERROR */) != 0 && s.NextFrame >= 0
+                    ? s.NextFrame : FrameAt(qpc, _startTimestamp, Stopwatch.Frequency);
+                var (first, skip) = AudioTimeline.Place(s.NextFrame, raw, (int)frames);
+                if (first != s.NextFrame || skip > 0)
+                    Log.Trace($"audio {s.Name}: packet of {frames} at frame {first}, " +
+                        $"{(s.NextFrame < 0 ? "first" : $"stamped {raw - s.NextFrame} from the previous end, {skip} dropped")}");
+                s.NextFrame = first + frames - skip;
                 s.Packets++; s.Frames += frames;
                 if ((flags & 0x2) != 0) s.SilentPackets++;
                 if (s.FirstAt == long.MinValue) s.FirstAt = first;
-                if ((flags & 0x2 /* SILENT */) == 0 && frames > 0)
-                    _mixer.Add(new ReadOnlySpan<float>(data, (int)frames * AudioMixer.Channels), first);
+                if ((flags & 0x2 /* SILENT */) == 0 && frames > skip)
+                    _mixer.Add(new ReadOnlySpan<float>(data + skip * AudioMixer.Channels, (int)(frames - skip) * AudioMixer.Channels), first);
                 Call(s.Capture, 4, frames);
             }
         }
-    }
-
-    // Timestamps are in 100 ns QPC units; small jitter snaps to the end of the previous packet to avoid clicks.
-    private long Place(Source s, ulong qpc100ns, uint frames, bool timestampError)
-    {
-        var at = timestampError && s.NextFrame >= 0 ? s.NextFrame : FrameAt(qpc100ns, _startTimestamp, Stopwatch.Frequency);
-        if (s.NextFrame >= 0 && Math.Abs(at - s.NextFrame) <= AudioMixer.Rate / 500) at = s.NextFrame;
-        s.NextFrame = at + frames;
-        return at;
     }
 
     /// Timeline frame of a packet stamped in 100 ns QPC units; the start is a raw QPC tick count. Converted without

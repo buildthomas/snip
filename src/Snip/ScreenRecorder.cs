@@ -63,6 +63,7 @@ internal sealed unsafe class ScreenRecorder
     private long _startTimestamp;
     private int _audioPeak;
     internal int AudioPeak => _audioPeak;
+    internal Action<short[], long>? AudioTap;
 
     private ScreenRecorder(Rectangle rect, string path, bool systemSound, bool microphone)
     {
@@ -413,6 +414,7 @@ internal sealed unsafe class ScreenRecorder
     private void WriteAudio(short[] pcm, long firstFrame)
     {
         if (pcm.Length == 0) return;
+        AudioTap?.Invoke(pcm, firstFrame);
         foreach (var v in pcm) _audioPeak = Math.Max(_audioPeak, Math.Abs((int)v));
         var len = pcm.Length * 2;
         IntPtr buffer = IntPtr.Zero, sample = IntPtr.Zero;
