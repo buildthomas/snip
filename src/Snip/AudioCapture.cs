@@ -40,16 +40,19 @@ internal sealed class AudioMixer
     }
 }
 
-/// Packets follow on from the previous one (the burst after silence shares one stamp and would otherwise stack);
-/// the stamp only wins for a real gap, or for large drift, where the part that would overlap is dropped.
+/// Packets follow on from the previous one: right after silence Windows pre-fills its buffer and the stamps race ahead
+/// of a sound that is in fact continuous. The stamp wins where Windows flags a discontinuity, or where following on
+/// would put sound well before it even arrived (the stream paused without saying so); for large drift behind, the
+/// part that would overlap is dropped.
 internal static class AudioTimeline
 {
-    public const long GapFrames = AudioMixer.Rate * 30 / 1000;
+    public const long MaxLagFrames = AudioMixer.Rate * 150 / 1000;
     public const long DriftFrames = AudioMixer.Rate / 5;
 
-    public static (long At, int Skip) Place(long nextFrame, long stampedFrame, int frames)
+    public static (long At, int Skip) Place(long nextFrame, long stampedFrame, int frames, bool discontinuity, long arrivalFrame)
     {
-        if (nextFrame < 0 || stampedFrame > nextFrame + GapFrames) return (stampedFrame, 0);
+        if (nextFrame < 0 || discontinuity && stampedFrame > nextFrame) return (stampedFrame, 0);
+        if (nextFrame + frames < arrivalFrame - MaxLagFrames) return (Math.Max(stampedFrame, arrivalFrame - frames), 0);
         if (stampedFrame < nextFrame - DriftFrames) return (nextFrame, (int)Math.Min(frames, nextFrame - stampedFrame));
         return (nextFrame, 0);
     }
@@ -58,7 +61,7 @@ internal static class AudioTimeline
 /// System sound (WASAPI loopback of the default output) and/or the default microphone, as 48 kHz stereo.
 internal sealed unsafe class AudioCapture
 {
-    private const long LatencyFrames = AudioMixer.Rate / 10;
+    private const long LatencyFrames = AudioMixer.Rate / 5;
 
     private sealed class Source
     {
@@ -66,7 +69,7 @@ internal sealed unsafe class AudioCapture
         public IntPtr Client, Capture;
         public long NextFrame = -1;
         public bool Dead;
-        public long Packets, Frames, SilentPackets, FirstAt = long.MinValue;
+        public long Packets, Frames, SilentPackets, FirstAt = long.MinValue, MinHeadroom = long.MaxValue;
     }
 
     private readonly List<Source> _sources = new();
@@ -166,7 +169,8 @@ internal sealed unsafe class AudioCapture
         foreach (var s in _sources)
         {
             if (s.Client != IntPtr.Zero) Call(s.Client, 11);
-            Log.Trace($"audio {s.Name}: {s.Packets} packets ({s.SilentPackets} silent), {s.Frames} frames, first at frame {s.FirstAt}, mixer at {_mixer.Written}, end {endFrame}");
+            Log.Trace($"audio {s.Name}: {s.Packets} packets ({s.SilentPackets} silent), {s.Frames} frames, first at frame {s.FirstAt}, " +
+                $"latest arrival {-s.MinHeadroom * 1000 / AudioMixer.Rate} ms after its stamp, mixer at {_mixer.Written}, end {endFrame}");
         }
     }
 
@@ -234,11 +238,13 @@ internal sealed unsafe class AudioCapture
                     s.Capture, &data, &frames, &flags, &devicePos, &qpc), s.Name);
                 var raw = (flags & 0x4 /* TIMESTAMP_ERROR */) != 0 && s.NextFrame >= 0
                     ? s.NextFrame : FrameAt(qpc, _startTimestamp, Stopwatch.Frequency);
-                var (first, skip) = AudioTimeline.Place(s.NextFrame, raw, (int)frames);
+                var (first, skip) = AudioTimeline.Place(s.NextFrame, raw, (int)frames, (flags & 0x1 /* DATA_DISCONTINUITY */) != 0, NowFrame());
                 if (first != s.NextFrame || skip > 0)
                     Log.Trace($"audio {s.Name}: packet of {frames} at frame {first}, " +
                         $"{(s.NextFrame < 0 ? "first" : $"stamped {raw - s.NextFrame} from the previous end, {skip} dropped")}");
                 s.NextFrame = first + frames - skip;
+                var headroom = first + skip - NowFrame();
+                if (headroom < s.MinHeadroom) s.MinHeadroom = headroom;
                 s.Packets++; s.Frames += frames;
                 if ((flags & 0x2) != 0) s.SilentPackets++;
                 if (s.FirstAt == long.MinValue) s.FirstAt = first;

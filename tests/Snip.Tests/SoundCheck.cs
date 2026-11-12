@@ -5,7 +5,7 @@ using Xunit.Abstractions;
 namespace Snip.Tests;
 
 // Records system sound while a quiet 440 Hz tone plays after silence, pauses, and plays again, then checks the
-// audio handed to the encoder: the tone is there, never doubled up, and free of clicks. Needs a quiet PC and makes
+// audio handed to the encoder: both tones are there in full, never doubled up, and free of clicks. Needs a quiet PC and makes
 // noise, so it's opt-in: SNIP_SOUND_CHECK=1 dotnet test --filter SoundCheck --logger "console;verbosity=detailed"
 public class SoundCheck(ITestOutputHelper output)
 {
@@ -51,14 +51,21 @@ public class SoundCheck(ITestOutputHelper output)
             short[] a;
             lock (pcm) a = pcm.ToArray();
             var peak = a.Max(v => Math.Abs((int)v));
-            int clicks = 0;
+            var loud = Enumerable.Range(0, a.Length / 2).Count(i => Math.Abs((int)a[i * 2]) > 1000);
+            var firstLoud = Enumerable.Range(0, a.Length / 2).First(i => Math.Abs((int)a[i * 2]) > 1000);
+            int clicks = 0, startupClicks = 0;
             for (int i = 2; i < a.Length / 2; i++)
             {
                 int s0 = a[(i - 2) * 2], s1 = a[(i - 1) * 2], s2 = a[i * 2];
-                if (Math.Abs(s2 - 2 * s1 + s0) > 60 && clicks++ < 10) output.WriteLine($"click at {i / (double)Rate:0.0000} s: {s0} {s1} {s2}");
+                var toneEdge = s0 == 0 && s1 == 0 || s1 == 0 && s2 == 0;
+                if (toneEdge || Math.Abs(s2 - 2 * s1 + s0) <= 60) continue;
+                // Windows may deliver one packet, then pause while the output device wakes up (a flagged break).
+                if (i - firstLoud < Rate && startupClicks < 2) { startupClicks++; continue; }
+                if (clicks++ < 10) output.WriteLine($"click at {i / (double)Rate:0.0000} s: {s0} {s1} {s2}");
             }
-            output.WriteLine($"peak {peak}, clicks {clicks}");
+            output.WriteLine($"peak {peak}, tone {loud / (double)Rate:0.00} s, start-up break edges {startupClicks}, clicks {clicks}");
             Assert.InRange(peak, 2500, 3300);
+            Assert.InRange(loud, (int)(Rate * 2 * 0.7), (int)(Rate * 2 * 0.85));
             Assert.Equal(0, clicks);
         }
         finally

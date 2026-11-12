@@ -47,7 +47,7 @@ public class AudioMixerTests
     [Fact]
     public void Timeline_FirstPacketGoesWhereItsStampSays()
     {
-        Assert.Equal((11_328L, 0), AudioTimeline.Place(-1, 11_328, 480));
+        Assert.Equal((11_328L, 0), AudioTimeline.Place(-1, 11_328, 480, discontinuity: true, arrivalFrame: 0));
     }
 
     [Fact]
@@ -57,7 +57,7 @@ public class AudioMixerTests
         var starts = new List<long>();
         for (int i = 0; i < 8; i++)
         {
-            var (at, skip) = AudioTimeline.Place(next, stamp, 480);
+            var (at, skip) = AudioTimeline.Place(next, stamp, 480, discontinuity: false, arrivalFrame: 0);
             Assert.Equal(0, skip);
             starts.Add(at);
             next = at + 480;
@@ -68,20 +68,46 @@ public class AudioMixerTests
     [Fact]
     public void Timeline_JitterIsIgnored()
     {
-        Assert.Equal((10_480L, 0), AudioTimeline.Place(10_480, 10_480 + 700, 480));
-        Assert.Equal((10_480L, 0), AudioTimeline.Place(10_480, 10_480 - 3_000, 480));
+        Assert.Equal((10_480L, 0), AudioTimeline.Place(10_480, 10_480 + 700, 480, discontinuity: false, arrivalFrame: 0));
+        Assert.Equal((10_480L, 0), AudioTimeline.Place(10_480, 10_480 - 3_000, 480, discontinuity: false, arrivalFrame: 0));
     }
 
     [Fact]
-    public void Timeline_ARealGapLeavesSilence()
+    public void Timeline_StampsRacingAheadAfterSilenceDontChopTheSound()
     {
-        Assert.Equal((200_000L, 0), AudioTimeline.Place(10_480, 200_000, 480));
+        // Logged on a real device: continuous packets stamped 40-50 ms apart while the buffer fills.
+        long next = 120_000;
+        foreach (var jump in new[] { 2_400, 1_920, 2_400, 1_920, 2_400 })
+        {
+            var (at, _) = AudioTimeline.Place(next, next + jump, 480, discontinuity: false, arrivalFrame: 0);
+            Assert.Equal(next, at);
+            next = at + 480;
+        }
+    }
+
+    [Fact]
+    public void Timeline_AFlaggedGapLeavesSilence()
+    {
+        Assert.Equal((200_000L, 0), AudioTimeline.Place(10_480, 200_000, 480, discontinuity: true, arrivalFrame: 0));
+    }
+
+    [Fact]
+    public void Timeline_AnUnflaggedPauseResyncsOnceFollowingOnWouldBeTooFarInThePast()
+    {
+        // Logged on a real device: after a 1.5 s pause the stream resumed without a discontinuity flag.
+        Assert.Equal((200_000L, 0), AudioTimeline.Place(130_000, 200_000, 480, discontinuity: false, arrivalFrame: 195_000));
+    }
+
+    [Fact]
+    public void Timeline_SteadyStreamsFollowOnEvenWhenStampsRunAheadOfArrival()
+    {
+        Assert.Equal((130_000L, 0), AudioTimeline.Place(130_000, 140_000, 480, discontinuity: false, arrivalFrame: 128_000));
     }
 
     [Fact]
     public void Timeline_FarBehindDropsTheOverlapInsteadOfStacking()
     {
-        var (at, skip) = AudioTimeline.Place(100_000, 100_000 - AudioTimeline.DriftFrames - 100, 480);
+        var (at, skip) = AudioTimeline.Place(100_000, 100_000 - AudioTimeline.DriftFrames - 100, 480, discontinuity: false, arrivalFrame: 0);
         Assert.Equal(100_000, at);
         Assert.Equal(480, skip);
     }
