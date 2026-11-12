@@ -20,23 +20,31 @@ function WaitFor([scriptblock] $cond, [string] $what, [int] $ms = 5000) {
 }
 
 function Find-RecordButton {
-    $bmp = New-Object System.Drawing.Bitmap 760, 80
-    $g = [System.Drawing.Graphics]::FromImage($bmp)
-    $g.CopyFromScreen($x0 - 60, $y0 + 400, 0, 0, $bmp.Size)
-    $g.Dispose()
-    try {
-        for ($y = 0; $y -lt 80; $y += 2) { for ($x = 0; $x -lt 760; $x += 2) {
-            $c = $bmp.GetPixel($x, $y)
-            if ($c.R -eq 230 -and $c.G -eq 40 -and $c.B -eq 40) { return [Drawing.Point]::new($x0 - 60 + $x + 3, $y0 + 400 + $y + 3) }
-        } }
-    } finally { $bmp.Dispose() }
+    for ($attempt = 0; $attempt -lt 10; $attempt++) {
+        $bmp = New-Object System.Drawing.Bitmap 760, 80
+        $g = [System.Drawing.Graphics]::FromImage($bmp)
+        $g.CopyFromScreen($x0 - 60, $y0 + 400, 0, 0, $bmp.Size)
+        $g.Dispose()
+        try {
+            for ($y = 0; $y -lt 80; $y += 2) { for ($x = 0; $x -lt 760; $x += 2) {
+                $c = $bmp.GetPixel($x, $y)
+                if ($c.R -eq 230 -and $c.G -eq 40 -and $c.B -eq 40) { return [Drawing.Point]::new($x0 - 60 + $x + 3, $y0 + 400 + $y + 3) }
+            } }
+        } finally { $bmp.Dispose() }
+        Start-Sleep -Milliseconds 200
+    }
+    if ($env:SNIP_E2E_DEBUG) {
+        $dbg = New-Object System.Drawing.Bitmap 1000, 700
+        $g = [System.Drawing.Graphics]::FromImage($dbg); $g.CopyFromScreen($x0 - 100, $y0 - 100, 0, 0, $dbg.Size); $g.Dispose()
+        $dbg.Save((Join-Path $OutDir 'record-button-missing.png')); $dbg.Dispose()
+    }
     Fail 'Record button not found'
 }
 
 function Start-Recording([string] $label) {
     Start-Process $Exe -ArgumentList '--capture' | Out-Null
     [void](WaitOverlay)
-    Start-Sleep -Milliseconds 300
+    Start-Sleep -Milliseconds 700
     [In]::Drag($x0, $y0, $x0 + 640, $y0 + 400)
     Start-Sleep -Milliseconds 200
     $p = Find-RecordButton
@@ -103,7 +111,7 @@ Write-Host 'ok: Yes discards'
 function Toggle-SystemSound {
     Start-Process $Exe -ArgumentList '--capture' | Out-Null
     [void](WaitOverlay)
-    Start-Sleep -Milliseconds 300
+    Start-Sleep -Milliseconds 700
     [In]::Drag($x0, $y0, $x0 + 640, $y0 + 400)
     Start-Sleep -Milliseconds 200
     $r = Find-RecordButton
