@@ -130,23 +130,11 @@ internal sealed class OverlayForm : Form
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);
-        ForceForeground();
+        Native.ForceForeground(this);
         var p = PointToClient(MousePosition);
         UpdateHover(p);
     }
 
-    private void ForceForeground()
-    {
-        if (GetForegroundWindow() == Handle) return;
-        var fg = GetForegroundWindow();
-        var fgThread = GetWindowThreadProcessId(fg, IntPtr.Zero);
-        var me = GetCurrentThreadId();
-        // Attaching to a hung app's input queue could stall this window too.
-        var attached = fgThread != 0 && fgThread != me && !IsHungAppWindow(fg) && AttachThreadInput(me, fgThread, true);
-        SetForegroundWindow(Handle);
-        Activate();
-        if (attached) AttachThreadInput(me, fgThread, false);
-    }
 
     // ---------- Layout ----------
 

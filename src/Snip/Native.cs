@@ -7,6 +7,20 @@ namespace Snip;
 
 internal static class Native
 {
+    // The hotkey's keystrokes are swallowed, so Windows doesn't let our windows take focus on their own.
+    public static void ForceForeground(Form form)
+    {
+        if (GetForegroundWindow() == form.Handle) return;
+        var fg = GetForegroundWindow();
+        var fgThread = GetWindowThreadProcessId(fg, IntPtr.Zero);
+        var me = GetCurrentThreadId();
+        // Attaching to a hung app's input queue could stall this window too.
+        var attached = fgThread != 0 && fgThread != me && !IsHungAppWindow(fg) && AttachThreadInput(me, fgThread, true);
+        SetForegroundWindow(form.Handle);
+        form.Activate();
+        if (attached) AttachThreadInput(me, fgThread, false);
+    }
+
     public const int WH_KEYBOARD_LL = 13;
     public const int WM_KEYDOWN = 0x0100;
     public const int WM_KEYUP = 0x0101;

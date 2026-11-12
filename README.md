@@ -183,6 +183,7 @@ Windows end-to-end scripts (they drive the real mouse and keyboard, except Timin
 powershell -STA -File tests\e2e\E2E.ps1 -Exe <Snip.exe> -OutDir <dir>        # main flow
 powershell -STA -File tests\e2e\Scenarios.ps1 -Exe <Snip.exe> -OutDir <dir>  # menus, window click, save dialog
 powershell -STA -File tests\e2e\EscGuard.ps1 -Exe <Snip.exe> -OutDir <dir>  # Esc twice to discard annotations
+powershell -STA -File tests\e2e\Record.ps1 -Exe <Snip.exe> -OutDir <dir>    # screen recording flow
 powershell -File tests\e2e\Timing.ps1 -Exe <Snip.exe>                         # overlay latency, no input needed
 ```
 

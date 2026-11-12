@@ -375,7 +375,7 @@ internal sealed class RecordingResultForm : Form
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);
-        Activate();
+        Native.ForceForeground(this);
     }
 
     [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);

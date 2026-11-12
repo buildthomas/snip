@@ -91,8 +91,8 @@ Windows:
   `RecordingBenchmark` (size and CPU) after changing it.
 - **Don't trim the working set** or otherwise page out the hook; Windows silently drops slow hooks.
 - **P/Invoke DLLs load from System32 only** (`DefaultDllImportSearchPaths` in `Native.cs`). Keep it.
-- **Ask the user before running `tests/e2e/E2E.ps1` or `Scenarios.ps1`.** They drive the real mouse and keyboard and
-  the user must keep hands off. `dotnet test` and `tests/e2e/Timing.ps1` need no input and are always fine.
+- **Ask the user before running the `tests/e2e` scripts** (`E2E.ps1`, `Scenarios.ps1`, `EscGuard.ps1`, `Record.ps1`).
+  They drive the real mouse and keyboard and the user must keep hands off; they also stop the installed Snip. `dotnet test` and `tests/e2e/Timing.ps1` need no input and are always fine.
 - **Don't edit sources with Windows PowerShell `Get-Content`/`Set-Content`.** PowerShell 5.1 reads UTF-8 without a
   BOM as Windows-1252 and garbles non-ASCII text (`SourceEncodingTests` guards this).
 
