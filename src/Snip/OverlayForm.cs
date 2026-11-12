@@ -855,6 +855,7 @@ internal sealed class OverlayForm : Form
         {
             _hoverButton = button;
             InvalidateChrome();
+            if (button?.Kind == ButtonKind.Record) HoverRecord();
         }
         UpdatePreview(p, button);
         Cursor = CursorFor(p, button);
@@ -1336,6 +1337,16 @@ internal sealed class OverlayForm : Form
 
     /// Raised with the selection in screen coordinates when the user asks to record it; the overlay then closes.
     public event Action<Rectangle>? RecordRequested;
+
+    /// Raised when the pointer moves onto the Record button, so the recorder can get ready before the click.
+    public event Action<Rectangle>? RecordHovered;
+
+    private void HoverRecord()
+    {
+        if (_selection is not Rectangle sel || sel.Width <= 0 || sel.Height <= 0 || _annotations.Count > 0 || _editing != null) return;
+        sel.Offset(Left, Top);
+        RecordHovered?.Invoke(sel);
+    }
 
     private void RequestRecording()
     {

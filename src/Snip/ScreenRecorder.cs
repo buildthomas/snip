@@ -38,10 +38,15 @@ internal sealed unsafe class ScreenRecorder
     private readonly Rectangle _rect;
     private readonly string _path;
     private readonly Thread _thread;
-    private readonly ManualResetEventSlim _ready = new();
+    private readonly ManualResetEventSlim _go = new();
     private readonly Stopwatch _clock = new();
-    private volatile bool _stop;
-    private Exception? _startError;
+    private volatile bool _stop, _cancelled;
+    private long _notBefore;
+    private readonly object _stateGate = new();
+    private bool _started;
+    private string? _failure;
+    private Action? _onStarted;
+    private Action<string>? _onFailed;
     private string? _stopReason;
     private int _frames;
     private Bitmap? _lastFrame;
@@ -68,18 +73,89 @@ internal sealed unsafe class ScreenRecorder
         _thread = new Thread(Run) { IsBackground = true, Name = "Snip recorder" };
     }
 
-    public static ScreenRecorder Start(Rectangle screenRect, string path, bool systemSound = false, bool microphone = false)
+    /// Sets everything up in the background (device, duplication, encoder) without capturing anything yet, so a
+    /// recording can start the moment it's asked for. Begin starts it; Cancel throws the preparation away.
+    public static ScreenRecorder Prepare(Rectangle screenRect, string path, bool systemSound, bool microphone)
     {
         var r = new ScreenRecorder(RecordingMath.Even(screenRect), path, systemSound, microphone);
         r._thread.Start();
-        r._ready.Wait();
-        if (r._startError != null) throw r._startError;
         return r;
+    }
+
+    public bool Matches(Rectangle screenRect, bool systemSound, bool microphone)
+    {
+        lock (_stateGate)
+            return !_cancelled && _failure == null && _rect == RecordingMath.Even(screenRect)
+                && systemSound == _systemSound && microphone == _microphone;
+    }
+
+    /// Starts capturing; the first frame is taken no earlier than the given delay, so a closing overlay is gone.
+    public void Begin(int notBeforeMs = 60)
+    {
+        _notBefore = Stopwatch.GetTimestamp() + notBeforeMs * Stopwatch.Frequency / 1000;
+        _go.Set();
+    }
+
+    public void Cancel()
+    {
+        _cancelled = true;
+        _go.Set();
+    }
+
+    /// Runs the action once capture is running (right away if it already is), on the recorder thread or the caller's.
+    public void WhenStarted(Action action)
+    {
+        lock (_stateGate)
+        {
+            if (!_started) { _onStarted += action; return; }
+        }
+        action();
+    }
+
+    /// Runs the action if preparing or starting fails (right away if it already did).
+    public void WhenFailed(Action<string> action)
+    {
+        string? failure;
+        lock (_stateGate)
+        {
+            failure = _failure;
+            if (failure == null) { _onFailed += action; return; }
+        }
+        action(failure);
+    }
+
+    /// Prepares, begins and waits until capture runs; for tests and tools.
+    public static ScreenRecorder Start(Rectangle screenRect, string path, bool systemSound = false, bool microphone = false)
+    {
+        var r = Prepare(screenRect, path, systemSound, microphone);
+        using var done = new ManualResetEventSlim();
+        string? failure = null;
+        r.WhenStarted(done.Set);
+        r.WhenFailed(f => { failure = f; done.Set(); });
+        r.Begin(0);
+        done.Wait();
+        if (failure != null) throw new InvalidOperationException(failure);
+        return r;
+    }
+
+    private void MarkStarted()
+    {
+        Action? a;
+        lock (_stateGate) { _started = true; a = _onStarted; _onStarted = null; }
+        a?.Invoke();
+    }
+
+    private void MarkFailed(string message)
+    {
+        Action<string>? a;
+        lock (_stateGate) { _failure = message; a = _onFailed; _onFailed = null; }
+        a?.Invoke(message);
     }
 
     public RecordingResult Stop()
     {
         _stop = true;
+        _go.Set();
         _thread.Join();
         var bytes = File.Exists(_path) ? new FileInfo(_path).Length : 0;
         if (bytes == 0) throw new IOException(_stopReason ?? "The recording produced no video.");
@@ -106,16 +182,30 @@ internal sealed unsafe class ScreenRecorder
         try
         {
             Init();
+            _go.Wait();
+            if (_cancelled)
+            {
+                Log.Trace("recording: prepared but not used");
+                Abandon();
+                return;
+            }
+            var wait = (_notBefore - Stopwatch.GetTimestamp()) * 1000 / Stopwatch.Frequency;
+            if (wait > 0) Thread.Sleep((int)wait);
+            // Fresh duplications, so a frame from while the overlay was still up can't sneak in.
+            foreach (var s in _sources)
+            {
+                Release(ref s.Dup);
+                if (!TryDuplicate(s)) throw new InvalidOperationException("Windows refused screen recording right now. Try again in a moment.");
+            }
+            if (_systemSound || _microphone) _audio = AudioCapture.Create(_systemSound, _microphone);
         }
         catch (Exception ex)
         {
-            _startError = ex;
-            Cleanup();
-            CoUninitialize();
-            _ready.Set();
+            Log.Write($"recording start failed: {ex}");
+            Abandon();
+            MarkFailed(ex.Message);
             return;
         }
-        _ready.Set();
 
         try
         {
@@ -146,6 +236,14 @@ internal sealed unsafe class ScreenRecorder
         CoUninitialize();
     }
 
+    private void Abandon()
+    {
+        Release(ref _writer);
+        Cleanup();
+        CoUninitialize();
+        try { File.Delete(_path); } catch (IOException) { }
+    }
+
     private void Loop()
     {
         long intervalMs = 1000 / RecordingMath.Fps;
@@ -154,6 +252,7 @@ internal sealed unsafe class ScreenRecorder
         var root = Path.GetPathRoot(Path.GetFullPath(_path))!;
         _startTimestamp = Stopwatch.GetTimestamp();
         _clock.Start();
+        MarkStarted();
         while (!_stop)
         {
             var now = _clock.ElapsedMilliseconds;
@@ -475,8 +574,6 @@ internal sealed unsafe class ScreenRecorder
         }
 
         Log.Trace($"recording setup: duplication {sw.ElapsedMilliseconds} ms");
-        if (_systemSound || _microphone) _audio = AudioCapture.Create(_systemSound, _microphone);
-        Log.Trace($"recording setup: audio {sw.ElapsedMilliseconds} ms");
         Check(MFStartup(0x0002_0070, 1 /* LITE: no sockets */), "start the video encoder");
         _mfStarted = true;
         Log.Trace($"recording setup: MF startup {sw.ElapsedMilliseconds} ms");
@@ -493,7 +590,7 @@ internal sealed unsafe class ScreenRecorder
             InitEncoder();
         }
         Log.Trace($"recording setup: encoder {sw.ElapsedMilliseconds} ms");
-        Log.Write($"recording started: {_rect.Width}x{_rect.Height} at {_rect.X},{_rect.Y}, {_sources.Count} display(s), " +
+        Log.Write($"recording prepared: {_rect.Width}x{_rect.Height} at {_rect.X},{_rect.Y}, {_sources.Count} display(s), " +
             $"{(_gpu ? "GPU" : "CPU")} path, system sound {(_systemSound ? "on" : "off")}, microphone {(_microphone ? "on" : "off")}");
     }
 
@@ -588,7 +685,7 @@ internal sealed unsafe class ScreenRecorder
                 Log.Write($"recording: encoder rejected quality mode (0x{hrEnc:X8}), using bitrate mode");
                 Check(Call(_writer, 4, _stream, inType, IntPtr.Zero), "start the video encoder");
             }
-            if (_audio != null) AddAudioStream();
+            if (_systemSound || _microphone) AddAudioStream();
             Check(Call(_writer, 5), "start the video encoder");
         }
         finally

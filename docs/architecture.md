@@ -72,8 +72,14 @@ macOS:   hotkey event ─► Capture.captureAll (SCScreenshotManager per display
 ## Screen recording (Windows)
 
 ```
-Record button ─► overlay closes ─► 150 ms ─► ScreenRecorder (own thread) ─► MP4 in %TEMP%\Snip ─► RecordingResultForm
+hover Record ─► ScreenRecorder.Prepare (device, duplication, encoder; own thread)
+click Record ─► overlay closes, border + bar shown ─► Begin (first frame ≥ 60 ms later) ─► MP4 in %TEMP%\Snip ─► RecordingResultForm
 ```
+
+- **Snappy start:** setup (GPU device ~150-250 ms, hardware encoder ~200-300 ms) starts when the pointer reaches the
+  Record button and is thrown away if it isn't clicked. With it prepared, capture runs ~60 ms after the click; without,
+  ~350 ms. The border and bar appear immediately either way; the bar's dot turns red once frames are being captured.
+  Sound devices are only opened on Begin, so the microphone indicator never lights up for a preparation.
 
 - **Capture:** DXGI Desktop Duplication, one duplication per display the area touches (all on one adapter). Changed
   frames are copied on the GPU into an accumulation texture; `AcquireNextFrame` blocks until something changes, so a

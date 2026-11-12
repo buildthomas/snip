@@ -16,6 +16,7 @@ internal sealed class TrayApp : ApplicationContext
     private OverlayForm? _overlay;
     private RecordingController? _recording;
     private Rectangle? _pendingRecording;
+    private ScreenRecorder? _prepared;
 
     public TrayApp(EventWaitHandle captureSignal, bool captureNow)
     {
@@ -116,6 +117,7 @@ internal sealed class TrayApp : ApplicationContext
             return;
         }
         _overlay.RecordRequested += area => _pendingRecording = area;
+        _overlay.RecordHovered += area => PrepareRecording(area);
         _overlay.Shown += (_, _) => Log.Trace($"overlay shown: capture {tCapture} ms, windows {tWindows} ms, form {tForm} ms, shown {sw.ElapsedMilliseconds} ms");
         _overlay.FormClosed += (_, e) =>
         {
@@ -132,28 +134,42 @@ internal sealed class TrayApp : ApplicationContext
             if (_pendingRecording is Rectangle area)
             {
                 _pendingRecording = null;
-                StartRecordingSoon(area);
+                StartRecording(area);
+            }
+            else
+            {
+                _prepared?.Cancel();
+                _prepared = null;
             }
         };
         _overlay.Show();
     }
 
-    // Give the compositor a moment to remove the overlay so it never appears in the first frame.
-    private void StartRecordingSoon(Rectangle area)
+    private void PrepareRecording(Rectangle area)
     {
-        var delay = new System.Windows.Forms.Timer { Interval = 150 };
-        delay.Tick += (_, _) =>
+        if (_prepared?.Matches(area, _settings.RecordSystemSound, _settings.RecordMicrophone) == true) return;
+        _prepared?.Cancel();
+        _prepared = null;
+        try { _prepared = ScreenRecorder.Prepare(area, RecordingFiles.NewPath(), _settings.RecordSystemSound, _settings.RecordMicrophone); }
+        catch (Exception ex) { Log.Write($"recording prepare failed: {ex.Message}"); }
+    }
+
+    private void StartRecording(Rectangle area)
+    {
+        PrepareRecording(area);
+        var recorder = _prepared;
+        _prepared = null;
+        if (recorder == null)
         {
-            delay.Dispose();
-            _recording = RecordingController.Start(area, _settings);
-            if (_recording != null)
-                _recording.Ended += () =>
-                {
-                    _recording = null;
-                    _hook.Reinstall();
-                };
+            MessageBox.Show("Couldn't start recording: the temp folder isn't writable.", "Snip", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        _recording = RecordingController.Start(recorder, _settings);
+        _recording.Ended += () =>
+        {
+            _recording = null;
+            _hook.Reinstall();
         };
-        delay.Start();
     }
 
     private void ToggleStartup()
@@ -192,6 +208,7 @@ internal sealed class TrayApp : ApplicationContext
             _tray.Dispose();
             _icon.Dispose();
             _overlay?.Dispose();
+            _prepared?.Cancel();
         }
         base.Dispose(disposing);
     }

@@ -63,25 +63,26 @@ internal sealed class RecordingController
         recorder.AutoStopped += _ => _bar.BeginInvoke(Stop);
     }
 
-    public static RecordingController? Start(Rectangle area, Settings settings)
+    /// Shows the border and bar right away and begins the (ideally already prepared) recorder.
+    public static RecordingController Start(ScreenRecorder recorder, Settings settings)
     {
-        string path;
-        ScreenRecorder recorder;
-        try
-        {
-            path = RecordingFiles.NewPath();
-            recorder = ScreenRecorder.Start(area, path, settings.RecordSystemSound, settings.RecordMicrophone);
-        }
-        catch (Exception ex)
-        {
-            Log.Write($"recording start failed: {ex}");
-            MessageBox.Show($"Couldn't start recording.\n\n{ex.Message}", "Snip", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            return null;
-        }
         var c = new RecordingController(recorder, settings);
         c._border.Show();
         c._bar.Show();
+        recorder.WhenStarted(() => c._bar.BeginInvoke(c._bar.MarkStarted));
+        recorder.WhenFailed(message => c._bar.BeginInvoke(() => c.Fail(message)));
+        recorder.Begin();
         return c;
+    }
+
+    private void Fail(string message)
+    {
+        if (_done) return;
+        _done = true;
+        _border.Close();
+        _bar.Close();
+        Ended?.Invoke();
+        MessageBox.Show($"Couldn't start recording.\n\n{message}", "Snip", MessageBoxButtons.OK, MessageBoxIcon.Warning);
     }
 
     public void Stop() => Finish(discard: false);
@@ -186,6 +187,7 @@ internal sealed class RecordingBar : Form
     private readonly BarButton _stop, _discard;
     private readonly Font _font, _symbols;
     private readonly string _soundIcons;
+    private bool _started;
 
     public RecordingBar(ScreenRecorder recorder, float scale, Action stop, Action discard, bool systemSound, bool microphone)
     {
@@ -218,6 +220,12 @@ internal sealed class RecordingBar : Form
     }
 
     private int S(float v) => (int)Math.Round(v * _s);
+
+    public void MarkStarted()
+    {
+        _started = true;
+        Invalidate();
+    }
 
     protected override bool ShowWithoutActivation => true;
 
@@ -253,7 +261,7 @@ internal sealed class RecordingBar : Form
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
         int d = S(10);
-        using (var red = new SolidBrush(RecordingUi.Red)) g.FillEllipse(red, S(12), (Height - d) / 2, d, d);
+        using (var dot = new SolidBrush(_started ? RecordingUi.Red : Color.FromArgb(120, 120, 124))) g.FillEllipse(dot, S(12), (Height - d) / 2, d, d);
         var text = RecordingFiles.FormatDuration(_recorder.Elapsed);
         var iconsW = _soundIcons.Length * S(22);
         TextRenderer.DrawText(g, text, _font, new Rectangle(S(28), 0, _stop.Left - S(28) - iconsW, Height), Color.White,
