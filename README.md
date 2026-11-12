@@ -77,7 +77,11 @@ Every redaction is flattened into the copied or saved image; there is no hidden 
 
 Select an area, then press the red **Record** button in the action bar. A thin red border marks what's being
 recorded, and a small bar next to it shows the time with **Stop** and **Discard**; press the capture hotkey again to
-stop too. The pointer is included, sound isn't, and there's no time limit.
+stop too. The pointer is included and there's no time limit.
+
+Sound is off unless you turn it on: the speaker button next to **Record** adds **system sound** (what you hear), the
+microphone button adds your **microphone**. Each is a separate on/off switch, remembered for next time, and the
+recording bar shows which ones are on. Sound adds about 0.7 MB per minute (AAC, 96 kbps).
 
 When you stop, a window shows the last frame, the length and the file size: **Copy** puts the MP4 on the clipboard as
 a file (paste it into a chat or an email), **Save as...** writes it where you like, **Play** opens it in your video

@@ -167,6 +167,8 @@ internal sealed class OverlayForm : Form
         UpdateSecureButton();
         for (int i = 0; i < EmojiFont.Set.Length; i++)
             _emojiButtons.Add(new ToolButton { Kind = ButtonKind.EmojiPick, Option = i, Tip = "" });
+        _actionButtons.Add(new ToolButton { Kind = ButtonKind.SystemSound, Tip = "Record system sound (on/off)" });
+        _actionButtons.Add(new ToolButton { Kind = ButtonKind.Microphone, Tip = "Record microphone (on/off)" });
         _actionButtons.Add(new ToolButton { Kind = ButtonKind.Record, Tip = "Record video of this area" });
         _actionButtons.Add(new ToolButton { Kind = ButtonKind.Copy, Tip = "Copy (Ctrl+C)" });
         _actionButtons.Add(new ToolButton { Kind = ButtonKind.Save, Tip = "Save as (Ctrl+S)" });
@@ -454,7 +456,9 @@ internal sealed class OverlayForm : Form
                 || b.Kind == ButtonKind.RedactStyle && b.Option == (int)_redactStyle
                 || b.Kind == ButtonKind.RedactShape && b.Option == (int)_redactShape
                 || b.Kind == ButtonKind.RedactSecure
-                || b.Kind == ButtonKind.EmojiPick && b.Option == _emojiIndex;
+                || b.Kind == ButtonKind.EmojiPick && b.Option == _emojiIndex
+                || b.Kind == ButtonKind.SystemSound && _settings.RecordSystemSound
+                || b.Kind == ButtonKind.Microphone && _settings.RecordMicrophone;
             if (active || b == _hoverButton)
             {
                 var fill = b.Kind == ButtonKind.RedactSecure && !_redactSecure ? Warning : active ? Accent : Color.FromArgb(70, 255, 255, 255);
@@ -1116,6 +1120,8 @@ internal sealed class OverlayForm : Form
             case ButtonKind.Undo: Undo(); break;
             case ButtonKind.Redo: Redo(); break;
             case ButtonKind.Record: RequestRecording(); break;
+            case ButtonKind.SystemSound: _settings.RecordSystemSound = !_settings.RecordSystemSound; InvalidateChrome(); break;
+            case ButtonKind.Microphone: _settings.RecordMicrophone = !_settings.RecordMicrophone; InvalidateChrome(); break;
             case ButtonKind.Copy: Copy(); break;
             case ButtonKind.Save: SaveAs(); break;
             case ButtonKind.Close: Close(); break;

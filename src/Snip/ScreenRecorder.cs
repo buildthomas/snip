@@ -51,16 +51,24 @@ internal sealed unsafe class ScreenRecorder
     public TimeSpan Elapsed => _clock.Elapsed;
     public Rectangle Rect => _rect;
 
-    private ScreenRecorder(Rectangle rect, string path)
+    private readonly bool _systemSound, _microphone;
+    private readonly object _writerGate = new();
+    private AudioCapture? _audio;
+    private uint _audioStream;
+    private long _startTimestamp;
+
+    private ScreenRecorder(Rectangle rect, string path, bool systemSound, bool microphone)
     {
         _rect = rect;
         _path = path;
+        _systemSound = systemSound;
+        _microphone = microphone;
         _thread = new Thread(Run) { IsBackground = true, Name = "Snip recorder" };
     }
 
-    public static ScreenRecorder Start(Rectangle screenRect, string path)
+    public static ScreenRecorder Start(Rectangle screenRect, string path, bool systemSound = false, bool microphone = false)
     {
-        var r = new ScreenRecorder(RecordingMath.Even(screenRect), path);
+        var r = new ScreenRecorder(RecordingMath.Even(screenRect), path, systemSound, microphone);
         r._thread.Start();
         r._ready.Wait();
         if (r._startError != null) throw r._startError;
@@ -117,6 +125,11 @@ internal sealed unsafe class ScreenRecorder
             _stopReason = $"Recording stopped: {ex.Message}";
             AutoStopped?.Invoke(_stopReason);
         }
+        if (_audio != null)
+        {
+            _audio.Stop(_lastTimestamp * AudioMixer.Rate / 10_000_000);
+            if (_audio.Error != null) _stopReason ??= $"Sound: {_audio.Error}";
+        }
         try
         {
             if (_writer != IntPtr.Zero && _frames > 0) Check(Call(_writer, 11), "finish the video");
@@ -136,6 +149,7 @@ internal sealed unsafe class ScreenRecorder
         long due = 0, lastWrite = long.MinValue / 2, nextDiskCheck = 0;
         var dirty = true;
         var root = Path.GetPathRoot(Path.GetFullPath(_path))!;
+        _startTimestamp = Stopwatch.GetTimestamp();
         _clock.Start();
         while (!_stop)
         {
@@ -157,6 +171,7 @@ internal sealed unsafe class ScreenRecorder
                 if (RecordingMath.ShouldWrite(now, due, dirty, lastWrite))
                 {
                     WriteFrame(now);
+                    if (_frames == 1) _audio?.Start(_startTimestamp, WriteAudio);
                     dirty = false;
                     lastWrite = now;
                 }
@@ -288,9 +303,35 @@ internal sealed unsafe class ScreenRecorder
         var t = nowMs * 10_000;
         Check(Call(sample, 36, t), "encode");
         Check(Call(sample, 38, 10_000_000L / RecordingMath.Fps), "encode");
-        Check(Call(_writer, 6, _stream, sample), "encode");
+        lock (_writerGate) Check(Call(_writer, 6, _stream, sample), "encode");
         _frames++;
         _lastTimestamp = t + 10_000_000L / RecordingMath.Fps;
+    }
+
+    private void WriteAudio(short[] pcm, long firstFrame)
+    {
+        if (pcm.Length == 0) return;
+        var len = pcm.Length * 2;
+        IntPtr buffer = IntPtr.Zero, sample = IntPtr.Zero;
+        try
+        {
+            Check(MFCreateMemoryBuffer((uint)len, out buffer), "encode sound");
+            byte* dst;
+            Check(Call(buffer, 3, &dst, (uint*)null, (uint*)null), "encode sound");
+            fixed (short* src = pcm) Buffer.MemoryCopy(src, dst, len, len);
+            Call(buffer, 4);
+            Check(Call(buffer, 6, (uint)len), "encode sound");
+            Check(MFCreateSample(out sample), "encode sound");
+            Check(Call(sample, 42, buffer), "encode sound");
+            Check(Call(sample, 36, firstFrame * 10_000_000 / AudioMixer.Rate), "encode sound");
+            Check(Call(sample, 38, (long)(pcm.Length / AudioMixer.Channels) * 10_000_000 / AudioMixer.Rate), "encode sound");
+            lock (_writerGate) Check(Call(_writer, 6, _audioStream, sample), "encode sound");
+        }
+        finally
+        {
+            Release(ref sample);
+            Release(ref buffer);
+        }
     }
 
     private void WriteFrameCpu(long nowMs)
@@ -427,6 +468,7 @@ internal sealed unsafe class ScreenRecorder
             _accum = accum;
         }
 
+        if (_systemSound || _microphone) _audio = AudioCapture.Create(_systemSound, _microphone);
         Check(MFStartup(0x0002_0070, 1 /* LITE: no sockets */), "start the video encoder");
         _mfStarted = true;
         try
@@ -441,7 +483,8 @@ internal sealed unsafe class ScreenRecorder
             _gpu = false;
             InitEncoder();
         }
-        Log.Write($"recording started: {_rect.Width}x{_rect.Height} at {_rect.X},{_rect.Y}, {_sources.Count} display(s), {(_gpu ? "GPU" : "CPU")} path");
+        Log.Write($"recording started: {_rect.Width}x{_rect.Height} at {_rect.X},{_rect.Y}, {_sources.Count} display(s), " +
+            $"{(_gpu ? "GPU" : "CPU")} path, system sound {(_systemSound ? "on" : "off")}, microphone {(_microphone ? "on" : "off")}");
     }
 
     private TextureDesc Desc(uint usage, uint bind, uint cpu, uint misc) => new()
@@ -535,6 +578,7 @@ internal sealed unsafe class ScreenRecorder
                 Log.Write($"recording: encoder rejected quality mode (0x{hrEnc:X8}), using bitrate mode");
                 Check(Call(_writer, 4, _stream, inType, IntPtr.Zero), "start the video encoder");
             }
+            if (_audio != null) AddAudioStream();
             Check(Call(_writer, 5), "start the video encoder");
         }
         finally
@@ -546,8 +590,43 @@ internal sealed unsafe class ScreenRecorder
         }
     }
 
+    private void AddAudioStream()
+    {
+        IntPtr outType = IntPtr.Zero, inType = IntPtr.Zero;
+        try
+        {
+            Check(MFCreateMediaType(out outType), "start the sound encoder");
+            SetGuid(outType, MF_MT_MAJOR_TYPE, MFMediaType_Audio);
+            SetGuid(outType, MF_MT_SUBTYPE, MFAudioFormat_AAC);
+            SetU32(outType, MF_MT_AUDIO_NUM_CHANNELS, AudioMixer.Channels);
+            SetU32(outType, MF_MT_AUDIO_SAMPLES_PER_SECOND, AudioMixer.Rate);
+            SetU32(outType, MF_MT_AUDIO_BITS_PER_SAMPLE, 16);
+            SetU32(outType, MF_MT_AUDIO_AVG_BYTES_PER_SECOND, 12000 /* 96 kbps */);
+            uint stream;
+            Check(Call(_writer, 3, outType, &stream), "start the sound encoder");
+            _audioStream = stream;
+
+            Check(MFCreateMediaType(out inType), "start the sound encoder");
+            SetGuid(inType, MF_MT_MAJOR_TYPE, MFMediaType_Audio);
+            SetGuid(inType, MF_MT_SUBTYPE, MFAudioFormat_PCM);
+            SetU32(inType, MF_MT_AUDIO_NUM_CHANNELS, AudioMixer.Channels);
+            SetU32(inType, MF_MT_AUDIO_SAMPLES_PER_SECOND, AudioMixer.Rate);
+            SetU32(inType, MF_MT_AUDIO_BITS_PER_SAMPLE, 16);
+            SetU32(inType, MF_MT_AUDIO_BLOCK_ALIGNMENT, AudioMixer.Channels * 2);
+            SetU32(inType, MF_MT_AUDIO_AVG_BYTES_PER_SECOND, AudioMixer.Rate * AudioMixer.Channels * 2);
+            Check(Call(_writer, 4, _audioStream, inType, IntPtr.Zero), "start the sound encoder");
+        }
+        finally
+        {
+            Release(ref inType);
+            Release(ref outType);
+        }
+    }
+
     private void Cleanup()
     {
+        _audio?.Release();
+        _audio = null;
         if (_frames > 0 && _staging != IntPtr.Zero)
         {
             try
@@ -649,6 +728,14 @@ internal sealed unsafe class ScreenRecorder
     private static readonly Guid MF_MT_PIXEL_ASPECT_RATIO = new("c6376a1e-8d0a-4027-be45-6d9a0ad39bb6");
     private static readonly Guid MF_MT_DEFAULT_STRIDE = new("644b4e48-1e02-4516-b0eb-c01ca9d49ac6");
     private static readonly Guid MF_MT_MPEG2_PROFILE = new("ad76a80b-2d5c-4e0b-b375-64e520137036");
+    private static readonly Guid MFMediaType_Audio = new("73647561-0000-0010-8000-00aa00389b71");
+    private static readonly Guid MFAudioFormat_AAC = new("00001610-0000-0010-8000-00aa00389b71");
+    private static readonly Guid MFAudioFormat_PCM = new("00000001-0000-0010-8000-00aa00389b71");
+    private static readonly Guid MF_MT_AUDIO_NUM_CHANNELS = new("37e48bf5-645e-4c5b-89de-ada9e29b696a");
+    private static readonly Guid MF_MT_AUDIO_SAMPLES_PER_SECOND = new("5faeeae7-0290-4c31-9e8a-c534f68d9dba");
+    private static readonly Guid MF_MT_AUDIO_BITS_PER_SAMPLE = new("f2deb57f-40fa-4764-aa33-ed4f2d1ff669");
+    private static readonly Guid MF_MT_AUDIO_AVG_BYTES_PER_SECOND = new("1aab75c8-cfef-451c-ab95-ac034b8e1731");
+    private static readonly Guid MF_MT_AUDIO_BLOCK_ALIGNMENT = new("322de230-9eeb-43bd-ab7a-ff412251541d");
     private static readonly Guid MFMediaType_Video = new("73646976-0000-0010-8000-00aa00389b71");
     private static readonly Guid MFVideoFormat_H264 = new("34363248-0000-0010-8000-00aa00389b71");
     private static readonly Guid MFVideoFormat_RGB32 = new("00000016-0000-0010-8000-00aa00389b71");

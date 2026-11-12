@@ -85,8 +85,13 @@ Record button ─► overlay closes ─► 150 ms ─► ScreenRecorder (own thr
   happy. The pointer is drawn into each frame with GDI (`GetDC` on the texture).
 - **Chrome:** the border strips and the Stop bar are excluded from capture (`WDA_EXCLUDEFROMCAPTURE`) and never take
   focus. The capture hotkey stops a running recording.
-- **Limits:** up to roughly 4K per side (H.264 levels), no rotated displays, no sound. Recording stops by itself when
-  less than 1 GB of disk space is left.
+- **Sound (optional, off by default):** WASAPI loopback of the default output for system sound and the default
+  microphone, both converted by Windows to 48 kHz stereo float. `AudioCapture` polls every 10 ms and places each
+  packet on the recording's timeline by its QPC timestamp (`AudioMixer`), so silence gaps (loopback sends nothing
+  while nothing plays) and clock drift don't push sound out of sync. Sources are summed and written 100 ms behind
+  real time as 16-bit PCM to Media Foundation's AAC encoder (96 kbps), a second track in the same MP4.
+- **Limits:** up to roughly 4K per side (H.264 levels), no rotated displays. Recording stops by itself when less than
+  1 GB of disk space is left. A sound device that disappears mid-recording becomes silence and is reported after.
 
 ## Hotkeys
 

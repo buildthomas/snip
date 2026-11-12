@@ -59,4 +59,27 @@ public class ScreenRecorderTests
             File.Delete(path);
         }
     }
+
+    [Fact]
+    public void RecordsWithASoundTrack()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"snip-test-{Guid.NewGuid():N}.mp4");
+        try
+        {
+            var area = System.Windows.Forms.Screen.PrimaryScreen!.Bounds;
+            var rec = ScreenRecorder.Start(new Rectangle(area.X, area.Y, 320, 240), path, systemSound: true);
+            Thread.Sleep(1500);
+            var result = rec.Stop();
+            result.LastFrame?.Dispose();
+
+            Assert.Null(result.StopReason);
+            var bytes = File.ReadAllBytes(path);
+            Assert.True(bytes.AsSpan().IndexOf("mp4a"u8) >= 0, "no AAC track");
+            Assert.True(bytes.AsSpan().IndexOf("avc1"u8) >= 0, "no H.264 track");
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
 }

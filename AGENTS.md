@@ -55,7 +55,7 @@ either platform.
 | User-remapped shortcuts for Undo/Redo/Copy/Paste/Select All/Save | n/a | ✅ via menu items | macOS App Shortcuts |
 | Start with Windows / at login | ✅ | ✅ | |
 | Installed-apps listing, uninstall | ✅ Start menu + Installed apps | ✅ `~/Applications`, `uninstall.sh` | |
-| Screen recording to MP4 (Record button, Stop bar, Copy/Save/Play/Discard) | ✅ | ❌ | **gap:** macOS port pending (ScreenCaptureKit + AVAssetWriter) |
+| Screen recording to MP4 (Record button, Stop bar, Copy/Save/Play/Discard, system sound and mic toggles) | ✅ | ❌ | **gap:** macOS port pending (ScreenCaptureKit + AVAssetWriter) |
 | Diagnostics | log + `SNIP_TRACE=1` | log + `--diagnostics` | **gap:** no `--diagnostics` on Windows |
 
 ## Hard rules

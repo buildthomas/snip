@@ -46,7 +46,7 @@ internal sealed class RecordingController
     private readonly ScreenRecorder _recorder;
     private readonly Settings _settings;
     private readonly RecordingBar _bar;
-    private readonly List<Form> _border = new();
+    private readonly RecordingBorder _border;
     private bool _done;
 
     public event Action? Ended;
@@ -57,14 +57,8 @@ internal sealed class RecordingController
         _settings = settings;
         var r = recorder.Rect;
         var scale = RecordingUi.ScaleAt(new Point(r.X + r.Width / 2, r.Y + r.Height / 2));
-        var t = Math.Max(2, (int)Math.Round(2 * scale));
-        foreach (var b in new[]
-        {
-            new Rectangle(r.Left - t, r.Top - t, r.Width + 2 * t, t), new Rectangle(r.Left - t, r.Bottom, r.Width + 2 * t, t),
-            new Rectangle(r.Left - t, r.Top, t, r.Height), new Rectangle(r.Right, r.Top, t, r.Height),
-        })
-            _border.Add(new BorderStrip(b));
-        _bar = new RecordingBar(recorder, scale, Stop, Discard);
+        _border = new RecordingBorder(r, Math.Max(1, (int)Math.Round(scale)));
+        _bar = new RecordingBar(recorder, scale, Stop, Discard, settings.RecordSystemSound, settings.RecordMicrophone);
         _bar.PlaceNear(r);
         recorder.AutoStopped += _ => _bar.BeginInvoke(Stop);
     }
@@ -76,7 +70,7 @@ internal sealed class RecordingController
         try
         {
             path = RecordingFiles.NewPath();
-            recorder = ScreenRecorder.Start(area, path);
+            recorder = ScreenRecorder.Start(area, path, settings.RecordSystemSound, settings.RecordMicrophone);
         }
         catch (Exception ex)
         {
@@ -85,7 +79,7 @@ internal sealed class RecordingController
             return null;
         }
         var c = new RecordingController(recorder, settings);
-        foreach (var f in c._border) f.Show();
+        c._border.Show();
         c._bar.Show();
         return c;
     }
@@ -98,7 +92,7 @@ internal sealed class RecordingController
     {
         if (_done) return;
         _done = true;
-        foreach (var f in _border) f.Close();
+        _border.Close();
         _bar.Close();
         RecordingResult? result = null;
         string? error = null;
@@ -140,18 +134,23 @@ internal static class RecordingUi
     [DllImport("user32.dll")] private static extern bool SetWindowDisplayAffinity(IntPtr hwnd, uint affinity);
 }
 
-/// A thin click-through strip of the border drawn just outside the recorded area.
-internal sealed class BorderStrip : Form
+/// One frame-shaped window just outside the recorded area; the hole lets clicks through to the apps inside.
+internal sealed class RecordingBorder : Form
 {
-    public BorderStrip(Rectangle bounds)
+    private readonly bool _excludeFromCapture;
+
+    public RecordingBorder(Rectangle area, int thickness, bool excludeFromCapture = true)
     {
+        _excludeFromCapture = excludeFromCapture;
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.Manual;
         ShowInTaskbar = false;
         TopMost = true;
         BackColor = RecordingUi.Red;
-        Opacity = 0.9;
-        Bounds = bounds;
+        Bounds = Rectangle.Inflate(area, thickness, thickness);
+        var frame = new Region(new Rectangle(Point.Empty, Size));
+        frame.Exclude(new Rectangle(thickness, thickness, area.Width, area.Height));
+        Region = frame;
     }
 
     protected override bool ShowWithoutActivation => true;
@@ -161,7 +160,7 @@ internal sealed class BorderStrip : Form
         get
         {
             var cp = base.CreateParams;
-            cp.ExStyle |= 0x80 /* TOOLWINDOW */ | 0x20 /* TRANSPARENT */ | 0x80000 /* LAYERED */ | 0x08000000 /* NOACTIVATE */;
+            cp.ExStyle |= 0x80 /* TOOLWINDOW */ | 0x08000000 /* NOACTIVATE */;
             return cp;
         }
     }
@@ -169,8 +168,12 @@ internal sealed class BorderStrip : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        RecordingUi.ExcludeFromCapture(Handle);
+        var square = 1; // DWMWCP_DONOTROUND
+        DwmSetWindowAttribute(Handle, 33 /* WINDOW_CORNER_PREFERENCE */, ref square, sizeof(int));
+        if (_excludeFromCapture) RecordingUi.ExcludeFromCapture(Handle);
     }
+
+    [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
 }
 
 /// Floating bar with the elapsed time, Stop and Discard. Never takes focus from the app being recorded.
@@ -181,12 +184,15 @@ internal sealed class RecordingBar : Form
     private readonly System.Windows.Forms.Timer _tick = new() { Interval = 500 };
     private readonly ToolTip _tips = new();
     private readonly BarButton _stop, _discard;
-    private readonly Font _font;
+    private readonly Font _font, _symbols;
+    private readonly string _soundIcons;
 
-    public RecordingBar(ScreenRecorder recorder, float scale, Action stop, Action discard)
+    public RecordingBar(ScreenRecorder recorder, float scale, Action stop, Action discard, bool systemSound, bool microphone)
     {
         _recorder = recorder;
         _s = scale;
+        _soundIcons = (systemSound ? "\uE767" : "") + (microphone ? "\uE720" : "");
+        _symbols = new Font("Segoe MDL2 Assets", 13f * _s, GraphicsUnit.Pixel);
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.Manual;
         ShowInTaskbar = false;
@@ -196,7 +202,7 @@ internal sealed class RecordingBar : Form
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint, true);
 
         int h = S(36), b = S(28);
-        Size = new Size(S(150), h);
+        Size = new Size(S(150) + _soundIcons.Length * S(22), h);
         _stop = new BarButton(BarButton.Glyph.Stop) { Bounds = new Rectangle(Width - 2 * b - S(8), (h - b) / 2, b, b) };
         _discard = new BarButton(BarButton.Glyph.Discard) { Bounds = new Rectangle(Width - b - S(4), (h - b) / 2, b, b) };
         _stop.Click += (_, _) => stop();
@@ -205,6 +211,8 @@ internal sealed class RecordingBar : Form
         Controls.Add(_discard);
         _tips.SetToolTip(_stop, "Stop recording (Win+Shift+S)");
         _tips.SetToolTip(_discard, "Discard recording");
+        if (_soundIcons.Length > 0)
+            _tips.SetToolTip(this, $"Recording {(systemSound && microphone ? "system sound and microphone" : systemSound ? "system sound" : "microphone")}");
         _tick.Tick += (_, _) => Invalidate(new Rectangle(0, 0, _stop.Left, Height));
         _tick.Start();
     }
@@ -247,13 +255,17 @@ internal sealed class RecordingBar : Form
         int d = S(10);
         using (var red = new SolidBrush(RecordingUi.Red)) g.FillEllipse(red, S(12), (Height - d) / 2, d, d);
         var text = RecordingFiles.FormatDuration(_recorder.Elapsed);
-        TextRenderer.DrawText(g, text, _font, new Rectangle(S(28), 0, _stop.Left - S(28), Height), Color.White,
+        var iconsW = _soundIcons.Length * S(22);
+        TextRenderer.DrawText(g, text, _font, new Rectangle(S(28), 0, _stop.Left - S(28) - iconsW, Height), Color.White,
             TextFormatFlags.VerticalCenter | TextFormatFlags.Left);
+        for (int i = 0; i < _soundIcons.Length; i++)
+            TextRenderer.DrawText(g, _soundIcons[i].ToString(), _symbols, new Rectangle(_stop.Left - iconsW + i * S(22), 0, S(22), Height),
+                Color.FromArgb(200, 200, 200), TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter);
     }
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { _tick.Dispose(); _tips.Dispose(); _font.Dispose(); }
+        if (disposing) { _tick.Dispose(); _tips.Dispose(); _font.Dispose(); _symbols.Dispose(); }
         base.Dispose(disposing);
     }
 

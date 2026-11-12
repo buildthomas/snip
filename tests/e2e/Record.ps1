@@ -1,5 +1,5 @@
 # Screen recording flow: Record button, stop by hotkey, Copy as file; Discard from the bar; Stop button and the
-# discard prompt. Drives the real mouse and keyboard; assumes 100% scaling on the primary display.
+# discard prompt; a recording with system sound (never the microphone). Drives the real mouse and keyboard; assumes 100% scaling on the primary display.
 # Usage: powershell -STA -File tests\e2e\Record.ps1 -Exe <Snip.exe> -OutDir <dir>
 param(
     [Parameter(Mandatory)] [string] $Exe,
@@ -98,6 +98,36 @@ Start-Sleep -Milliseconds 600
 WaitFor { (ResultWindow) -eq [IntPtr]::Zero } 'result window to close after Yes'
 if ((Mp4s).Count -ne $count) { Fail 'recording discarded via the prompt left a file behind' }
 Write-Host 'ok: Yes discards'
+
+# 4. System sound on: the MP4 gets an AAC track. The toggle sits two buttons left of Record; it's switched off again after.
+function Toggle-SystemSound {
+    Start-Process $Exe -ArgumentList '--capture' | Out-Null
+    [void](WaitOverlay)
+    Start-Sleep -Milliseconds 300
+    [In]::Drag($x0, $y0, $x0 + 640, $y0 + 400)
+    Start-Sleep -Milliseconds 200
+    $r = Find-RecordButton
+    [In]::Click($r.X - 60, $r.Y)
+    Start-Sleep -Milliseconds 200
+    return $r
+}
+$r = Toggle-SystemSound
+[In]::Click($r.X, $r.Y)
+WaitFor { (Overlay) -eq [IntPtr]::Zero } 'overlay to close'
+Start-Sleep -Milliseconds 2000
+Trigger 'WinShiftS'
+WaitFor { (ResultWindow) -ne [IntPtr]::Zero } 'result window (with sound)'
+Start-Sleep -Milliseconds 400
+Ctrl 0x43
+WaitFor { (ResultWindow) -eq [IntPtr]::Zero } 'result window to close'
+$files = [System.Windows.Forms.Clipboard]::GetFileDropList()
+$text = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($files[0]))
+if (-not $text.Contains('mp4a')) { Fail 'recording with system sound has no AAC track' }
+Write-Host 'ok: system sound track recorded'
+[void](Toggle-SystemSound)
+[In]::Tap(0x1B)
+WaitFor { (Overlay) -eq [IntPtr]::Zero } 'overlay to close after switching sound off'
+Write-Host 'ok: system sound switched off again'
 
 Cleanup
 Write-Host 'PASS'
