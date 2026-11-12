@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Drawing.Drawing2D;
 
 namespace Snip;
@@ -90,17 +91,39 @@ internal sealed class RecordSelectOverlay : Form
         }
     }
 
+    // Registered while open so the keys work even when Windows hands focus elsewhere after the hotkey.
+    private static readonly (int Id, uint Mods, Keys Key)[] OverlayKeys =
+    [
+        (1, 0, Keys.Escape), (2, 0, Keys.Enter), (3, 0, Keys.S), (4, 0, Keys.M), (5, 0x2 /* CONTROL */, Keys.A),
+    ];
+
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
         RecordingUi.ExcludeFromCapture(Handle);
+        foreach (var k in OverlayKeys) RegisterHotKey(Handle, k.Id, k.Mods | 0x4000 /* NOREPEAT */, (uint)k.Key);
+    }
+
+    protected override void OnHandleDestroyed(EventArgs e)
+    {
+        foreach (var k in OverlayKeys) UnregisterHotKey(Handle, k.Id);
+        base.OnHandleDestroyed(e);
     }
 
     protected override void WndProc(ref Message m)
     {
         if (m.Msg == Native.WM_DPICHANGED) { m.Result = IntPtr.Zero; return; }
+        if (m.Msg == 0x0312 /* WM_HOTKEY */)
+        {
+            foreach (var k in OverlayKeys)
+                if (k.Id == (int)m.WParam) HandleKey(k.Key, k.Mods != 0);
+            return;
+        }
         base.WndProc(ref m);
     }
+
+    [DllImport("user32.dll")] private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint mods, uint vk);
+    [DllImport("user32.dll")] private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
     protected override void OnShown(EventArgs e)
     {
@@ -227,15 +250,17 @@ internal sealed class RecordSelectOverlay : Form
     // ---------- Keyboard ----------
 
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        => HandleKey(keyData & Keys.KeyCode, (keyData & Keys.Control) != 0) || base.ProcessCmdKey(ref msg, keyData);
+
+    private bool HandleKey(Keys key, bool ctrl)
     {
-        var key = keyData & Keys.KeyCode;
-        var ctrl = (keyData & Keys.Control) != 0;
-        if (key == Keys.Escape) { Close(); return true; }
-        if (key == Keys.Enter) { Record(); return true; }
-        if (ctrl && key == Keys.A) { _selection = MonitorAt(Cursor.Position); Settle(); return true; }
-        if (!ctrl && key == Keys.S) { _bar.ToggleSystemSound(); return true; }
-        if (!ctrl && key == Keys.M) { _bar.ToggleMicrophone(); return true; }
-        return base.ProcessCmdKey(ref msg, keyData);
+        if (key == Keys.Escape) Close();
+        else if (key == Keys.Enter) Record();
+        else if (ctrl && key == Keys.A) { _selection = MonitorAt(Cursor.Position); Settle(); }
+        else if (!ctrl && key == Keys.S) _bar.ToggleSystemSound();
+        else if (!ctrl && key == Keys.M) _bar.ToggleMicrophone();
+        else return false;
+        return true;
     }
 
     private void Record()

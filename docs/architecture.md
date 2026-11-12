@@ -80,6 +80,8 @@ Record/Enter ─► overlay closes, border + bar shown ─► Begin (first frame
   hole over the selection), a nearly transparent input window on top that takes mouse and keys, the selection frame
   (border, handles, size label as one region-shaped window) and the setup bar. One per-pixel-alpha window would need a
   virtual-screen-sized bitmap (tens of MB on multi-monitor setups) redrawn on every mouse move.
+  Its keys (Esc, Enter, S, M, Ctrl+A) are registered as hotkeys while it's open, so they work even if Windows
+  doesn't give it focus after the hotkey.
 - **Snappy start:** setup (GPU device ~150-250 ms, hardware encoder ~200-300 ms) starts as soon as a selection settles
   (or a sound toggle changes) and is thrown away if recording doesn't start. With it prepared, capture runs ~60 ms after the click; without,
   ~350 ms. The border and bar appear immediately either way; the bar's dot turns red once frames are being captured.
