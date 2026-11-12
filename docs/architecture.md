@@ -80,13 +80,15 @@ Record/Enter ─► overlay closes, border + bar shown ─► Begin (first frame
   hole over the selection), a nearly transparent input window on top that takes mouse and keys, the selection frame
   (border, handles, size label as one region-shaped window) and the setup bar. One per-pixel-alpha window would need a
   virtual-screen-sized bitmap (tens of MB on multi-monitor setups) redrawn on every mouse move.
-  Its keys (Esc, Enter, S, M, Ctrl+A) are registered as hotkeys while it's open, so they work even if Windows
-  doesn't give it focus after the hotkey.
+  Esc is registered as a hotkey while it's open, so it cancels even if Windows doesn't give the overlay focus.
 - **Snappy start:** setup (GPU device ~150-250 ms, hardware encoder ~200-300 ms) starts as soon as a selection settles
-  (or a sound toggle changes) and is thrown away if recording doesn't start. With it prepared, capture runs ~60 ms after the click; without,
-  ~350 ms. The border and bar appear immediately either way; the bar's dot turns red once frames are being captured.
-  Sound devices are only opened on Begin, so the microphone indicator never lights up for a preparation.
-
+  (or a sound toggle changes; debounced by 150 ms) and is thrown away if recording doesn't start. With it prepared,
+  capture runs ~60 ms after the click; without, ~350 ms. The border and bar appear immediately either way; the bar's
+  dot turns red once frames are being captured. Sound devices are only opened on Begin, so the microphone indicator
+  never lights up for a preparation.
+- **Temp files:** each recording reserves a unique name in `%TEMP%\Snip` up front. Files are deleted on Discard, after
+  Save as, on a failed start and when Snip exits with a recording or unresolved result open; anything left (a copied
+  file, a delete that failed because a player held it) goes at the next start or on uninstall.
 - **Capture:** DXGI Desktop Duplication, one duplication per display the area touches (all on one adapter). Changed
   frames are copied on the GPU into an accumulation texture; `AcquireNextFrame` blocks until something changes, so a
   still screen costs nothing.
@@ -100,7 +102,7 @@ Record/Enter ─► overlay closes, border + bar shown ─► Begin (first frame
 - **Sound (optional, off by default):** WASAPI loopback of the default output for system sound and the default
   microphone, both converted by Windows to 48 kHz stereo float. `AudioCapture` polls every 10 ms and places each
   packet on the recording's timeline by its QPC timestamp (`AudioMixer`), so silence gaps (loopback sends nothing
-  while nothing plays) and clock drift don't push sound out of sync. Sources are summed and written 100 ms behind
+  while nothing plays) and clock drift don't push sound out of sync. Sources are summed and written 200 ms behind
   real time as 16-bit PCM to Media Foundation's AAC encoder (96 kbps), a second track in the same MP4.
 - **Limits:** up to roughly 4K per side (H.264 levels), no rotated displays. Recording stops by itself when less than
   1 GB of disk space is left. A sound device that disappears mid-recording becomes silence and is reported after.

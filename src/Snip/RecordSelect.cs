@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using System.Drawing.Drawing2D;
 
 namespace Snip;
@@ -37,10 +36,7 @@ internal static class SelectionMath
     }
 }
 
-/// Win+Shift+R: pick what to record over the live screen. The screen keeps moving under a light dim; drag an area,
-/// click a window, or Ctrl+A for the display, then Record (Enter). Esc or right-click cancels.
-/// This window takes the input and is almost fully transparent; the dim, the selection frame and the bar are
-/// separate windows, all kept out of screen captures.
+/// Win+Shift+R: pick what to record over the live screen. This nearly transparent window takes the input.
 internal sealed class RecordSelectOverlay : Form
 {
     private enum Drag { None, Pending, New, Move, Resize }
@@ -78,7 +74,7 @@ internal sealed class RecordSelectOverlay : Form
         Cursor = Cursors.Cross;
         _dim = new DimLayer(virtualScreen);
         _frame = new SelectionFrame();
-        _bar = new RecordSetupBar(settings, Record, Close, () => { if (_selection is Rectangle s) SelectionSettled?.Invoke(s); });
+        _bar = new RecordSetupBar(settings, Record, Close, () => { if (_drag == Drag.None && _selection is Rectangle s) SelectionSettled?.Invoke(s); });
     }
 
     protected override CreateParams CreateParams
@@ -91,39 +87,26 @@ internal sealed class RecordSelectOverlay : Form
         }
     }
 
-    // Registered while open so the keys work even when Windows hands focus elsewhere after the hotkey.
-    private static readonly (int Id, uint Mods, Keys Key)[] OverlayKeys =
-    [
-        (1, 0, Keys.Escape), (2, 0, Keys.Enter), (3, 0, Keys.S), (4, 0, Keys.M), (5, 0x2 /* CONTROL */, Keys.A),
-    ];
-
+    // Esc is a hotkey while open, so it cancels even if Windows didn't give the overlay focus; other keys need focus.
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
         RecordingUi.ExcludeFromCapture(Handle);
-        foreach (var k in OverlayKeys) RegisterHotKey(Handle, k.Id, k.Mods | 0x4000 /* NOREPEAT */, (uint)k.Key);
+        Native.RegisterHotKey(Handle, 1, 0x4000 /* NOREPEAT */, (uint)Keys.Escape);
     }
 
     protected override void OnHandleDestroyed(EventArgs e)
     {
-        foreach (var k in OverlayKeys) UnregisterHotKey(Handle, k.Id);
+        Native.UnregisterHotKey(Handle, 1);
         base.OnHandleDestroyed(e);
     }
 
     protected override void WndProc(ref Message m)
     {
         if (m.Msg == Native.WM_DPICHANGED) { m.Result = IntPtr.Zero; return; }
-        if (m.Msg == 0x0312 /* WM_HOTKEY */)
-        {
-            foreach (var k in OverlayKeys)
-                if (k.Id == (int)m.WParam) HandleKey(k.Key, k.Mods != 0);
-            return;
-        }
+        if (m.Msg == Native.WM_HOTKEY) { Close(); return; }
         base.WndProc(ref m);
     }
-
-    [DllImport("user32.dll")] private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint mods, uint vk);
-    [DllImport("user32.dll")] private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
     protected override void OnShown(EventArgs e)
     {
@@ -145,7 +128,7 @@ internal sealed class RecordSelectOverlay : Form
         var p = Screen(e.Location);
         if (e.Button == MouseButtons.Right)
         {
-            if (_drag is Drag.New or Drag.Move or Drag.Resize) { _selection = _start.IsEmpty ? null : _start; _drag = Drag.None; if (_selection != null) Settle(); else ShowArea(null); }
+            if (_drag is Drag.New or Drag.Move or Drag.Resize) { _selection = _start.IsEmpty ? null : _start; _drag = Drag.None; if (_selection != null) Settle(); else { _hover = null; ShowArea(null); } }
             else Close();
             return;
         }
@@ -156,7 +139,6 @@ internal sealed class RecordSelectOverlay : Form
         _drag = _handle >= 0 ? Drag.Resize : _selection is Rectangle sel && sel.Contains(p) ? Drag.Move : Drag.Pending;
         _bar.Hide();
     }
-
 
     protected override void OnMouseMove(MouseEventArgs e)
     {
@@ -286,45 +268,19 @@ internal sealed class RecordSelectOverlay : Form
     }
 
     /// Dims the screen except the hole; clicks pass straight through it.
-    private sealed class DimLayer : Form
+    private sealed class DimLayer : ChromeForm
     {
         private readonly Rectangle _bounds;
 
         public DimLayer(Rectangle bounds)
         {
             _bounds = bounds;
-            FormBorderStyle = FormBorderStyle.None;
-            StartPosition = FormStartPosition.Manual;
             Bounds = bounds;
-            ShowInTaskbar = false;
-            TopMost = true;
             BackColor = Color.Black;
             Opacity = 0.35;
         }
 
-        protected override bool ShowWithoutActivation => true;
-
-        protected override CreateParams CreateParams
-        {
-            get
-            {
-                var cp = base.CreateParams;
-                cp.ExStyle |= 0x80 | 0x20 /* TRANSPARENT */ | 0x80000 /* LAYERED */ | 0x08000000 /* NOACTIVATE */;
-                return cp;
-            }
-        }
-
-        protected override void OnHandleCreated(EventArgs e)
-        {
-            base.OnHandleCreated(e);
-            RecordingUi.ExcludeFromCapture(Handle);
-        }
-
-        protected override void WndProc(ref Message m)
-        {
-            if (m.Msg == Native.WM_DPICHANGED) { m.Result = IntPtr.Zero; return; }
-            base.WndProc(ref m);
-        }
+        protected override int ExtraExStyle => 0x20 /* TRANSPARENT */ | 0x80000 /* LAYERED */;
 
         public void SetHole(Rectangle? hole)
         {
@@ -341,9 +297,8 @@ internal sealed class RecordSelectOverlay : Form
     }
 
     /// The selection's border, handles and size label; click-through, opaque, square-cornered.
-    private sealed class SelectionFrame : Form
+    private sealed class SelectionFrame : ChromeForm
     {
-        private static readonly Color Accent = Color.FromArgb(0, 150, 255);
         private Rectangle _sel;
         private bool _handles;
         private Font? _font;
@@ -351,38 +306,16 @@ internal sealed class RecordSelectOverlay : Form
 
         public SelectionFrame()
         {
-            FormBorderStyle = FormBorderStyle.None;
-            StartPosition = FormStartPosition.Manual;
-            ShowInTaskbar = false;
-            TopMost = true;
-            BackColor = Accent;
+            BackColor = RecordingUi.Accent;
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint, true);
         }
 
-        protected override bool ShowWithoutActivation => true;
-
-        protected override CreateParams CreateParams
-        {
-            get
-            {
-                var cp = base.CreateParams;
-                cp.ExStyle |= 0x80 | 0x20 /* TRANSPARENT */ | 0x08000000 /* NOACTIVATE */;
-                return cp;
-            }
-        }
+        protected override int ExtraExStyle => 0x20 /* TRANSPARENT */;
 
         protected override void OnHandleCreated(EventArgs e)
         {
             base.OnHandleCreated(e);
-            var square = 1;
-            RecordingUi.DwmSetWindowAttribute(Handle, 33, ref square, sizeof(int));
-            RecordingUi.ExcludeFromCapture(Handle);
-        }
-
-        protected override void WndProc(ref Message m)
-        {
-            if (m.Msg == Native.WM_DPICHANGED) { m.Result = IntPtr.Zero; return; }
-            base.WndProc(ref m);
+            Native.SquareCorners(Handle);
         }
 
         private int S(float v) => (int)Math.Round(v * _scale);
@@ -390,8 +323,7 @@ internal sealed class RecordSelectOverlay : Form
         private Rectangle LabelRect(Rectangle bounds)
         {
             var size = TextRenderer.MeasureText(Label, _font);
-            var r = new Rectangle(_sel.X - bounds.X, _sel.Y - bounds.Y - size.Height - S(6), size.Width + S(10), size.Height + S(2));
-            return r;
+            return new Rectangle(_sel.X - bounds.X, _sel.Y - bounds.Y - size.Height - S(6), size.Width + S(10), size.Height + S(2));
         }
 
         private string Label => $"{_sel.Width} × {_sel.Height}";
@@ -427,7 +359,7 @@ internal sealed class RecordSelectOverlay : Form
         protected override void OnPaint(PaintEventArgs e)
         {
             var g = e.Graphics;
-            g.Clear(Accent);
+            g.Clear(RecordingUi.Accent);
             var local = new Rectangle(_sel.X - Left, _sel.Y - Top, _sel.Width, _sel.Height);
             if (_handles)
             {
@@ -449,9 +381,8 @@ internal sealed class RecordSelectOverlay : Form
 }
 
 /// Sound and microphone toggles, Record and Cancel, shown next to the selection.
-internal sealed class RecordSetupBar : Form
+internal sealed class RecordSetupBar : ChromeForm
 {
-    private static readonly Color Accent = Color.FromArgb(0, 150, 255);
     private readonly Settings _settings;
     private readonly Action _record, _cancel, _changed;
     private readonly ToolTip _tips = new() { ShowAlways = true };
@@ -470,36 +401,8 @@ internal sealed class RecordSetupBar : Form
         _record = record;
         _cancel = cancel;
         _changed = changed;
-        FormBorderStyle = FormBorderStyle.None;
-        StartPosition = FormStartPosition.Manual;
-        ShowInTaskbar = false;
-        TopMost = true;
         BackColor = RecordingUi.Back;
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint, true);
-    }
-
-    protected override bool ShowWithoutActivation => true;
-
-    protected override CreateParams CreateParams
-    {
-        get
-        {
-            var cp = base.CreateParams;
-            cp.ExStyle |= 0x80 /* TOOLWINDOW */ | 0x08000000 /* NOACTIVATE */;
-            return cp;
-        }
-    }
-
-    protected override void OnHandleCreated(EventArgs e)
-    {
-        base.OnHandleCreated(e);
-        RecordingUi.ExcludeFromCapture(Handle);
-    }
-
-    protected override void WndProc(ref Message m)
-    {
-        if (m.Msg == Native.WM_DPICHANGED) { m.Result = IntPtr.Zero; return; }
-        base.WndProc(ref m);
     }
 
     private int S(float v) => (int)Math.Round(v * _s);
@@ -586,7 +489,7 @@ internal sealed class RecordSetupBar : Form
         {
             if (on || _hover == b)
             {
-                using var fill = new SolidBrush(on ? Accent : Color.FromArgb(70, 255, 255, 255));
+                using var fill = new SolidBrush(on ? RecordingUi.Accent : Color.FromArgb(70, 255, 255, 255));
                 g.FillRectangle(fill, Rectangle.Inflate(b.Rect, -S(1), -S(1)));
             }
             Icons.Draw(g, b, Color.White, enabled: true);

@@ -32,6 +32,7 @@ public class RecordingMathTests
     }
 }
 
+[Collection("screen")]
 public class ScreenRecorderTests
 {
     [Fact]
@@ -81,5 +82,43 @@ public class ScreenRecorderTests
         {
             File.Delete(path);
         }
+    }
+}
+
+[Collection("screen")]
+public class RecordingFilesTests
+{
+    [Fact]
+    public void NewPath_ReservesDistinctNamesAndTheRecorderWritesIntoThem()
+    {
+        var a = RecordingFiles.NewPath();
+        var b = RecordingFiles.NewPath();
+        try
+        {
+            Assert.NotEqual(a, b);
+            Assert.True(File.Exists(a) && File.Exists(b));
+            var area = System.Windows.Forms.Screen.PrimaryScreen!.Bounds;
+            var rec = ScreenRecorder.Start(new Rectangle(area.X, area.Y, 320, 240), a);
+            Thread.Sleep(300);
+            rec.Stop().LastFrame?.Dispose();
+            Assert.True(new FileInfo(a).Length > 0);
+        }
+        finally
+        {
+            File.Delete(a);
+            File.Delete(b);
+        }
+    }
+
+    [Fact]
+    public void CancelledPreparation_LeavesNoFile()
+    {
+        var path = RecordingFiles.NewPath();
+        var area = System.Windows.Forms.Screen.PrimaryScreen!.Bounds;
+        var rec = ScreenRecorder.Prepare(new Rectangle(area.X, area.Y, 320, 240), path, false, false);
+        rec.Cancel();
+        var deadline = DateTime.Now.AddSeconds(5);
+        while (File.Exists(path) && DateTime.Now < deadline) Thread.Sleep(50);
+        Assert.False(File.Exists(path));
     }
 }

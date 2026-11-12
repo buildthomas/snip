@@ -18,6 +18,9 @@ internal sealed class TrayApp : ApplicationContext
     private RecordingController? _recording;
     private Rectangle? _pendingRecording;
     private ScreenRecorder? _prepared;
+    private string? _prepareError;
+    private readonly System.Windows.Forms.Timer _prepareDelay = new() { Interval = 150 };
+    private Rectangle _prepareArea;
 
     public TrayApp(EventWaitHandle captureSignal, bool captureNow)
     {
@@ -61,6 +64,7 @@ internal sealed class TrayApp : ApplicationContext
         SystemEvents.SessionSwitch += OnSessionSwitch;
         SystemEvents.PowerModeChanged += OnPowerModeChanged;
 
+        _prepareDelay.Tick += (_, _) => { _prepareDelay.Stop(); PrepareRecording(_prepareArea); };
         RecordingFiles.CleanUp();
         if (captureNow) _ui.Post(_ => Capture(), null);
     }
@@ -151,10 +155,12 @@ internal sealed class TrayApp : ApplicationContext
         var previousForeground = Native.GetForegroundWindow();
         var screen = SystemInformation.VirtualScreen;
         _recordSelect = new RecordSelectOverlay(screen, WindowFinder.VisibleWindows(screen), _settings);
-        _recordSelect.SelectionSettled += PrepareRecording;
+        // Debounced, so quick adjustments don't stack up encoder sessions.
+        _recordSelect.SelectionSettled += area => { _prepareArea = area; _prepareDelay.Stop(); _prepareDelay.Start(); };
         _recordSelect.RecordRequested += area => _pendingRecording = area;
         _recordSelect.FormClosed += (_, _) =>
         {
+            _prepareDelay.Stop();
             _recordSelect.Dispose();
             _recordSelect = null;
             _settings.Save();
@@ -179,8 +185,13 @@ internal sealed class TrayApp : ApplicationContext
         if (_prepared?.Matches(area, _settings.RecordSystemSound, _settings.RecordMicrophone) == true) return;
         _prepared?.Cancel();
         _prepared = null;
+        _prepareError = null;
         try { _prepared = ScreenRecorder.Prepare(area, RecordingFiles.NewPath(), _settings.RecordSystemSound, _settings.RecordMicrophone); }
-        catch (Exception ex) { Log.Write($"recording prepare failed: {ex.Message}"); }
+        catch (Exception ex)
+        {
+            Log.Write($"recording prepare failed: {ex.Message}");
+            _prepareError = ex.Message;
+        }
     }
 
     private void StartRecording(Rectangle area)
@@ -190,7 +201,7 @@ internal sealed class TrayApp : ApplicationContext
         _prepared = null;
         if (recorder == null)
         {
-            MessageBox.Show("Couldn't start recording: the temp folder isn't writable.", "Snip", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show($"Couldn't start recording.\n\n{_prepareError}", "Snip", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
         _recording = RecordingController.Start(recorder, _settings);
@@ -237,7 +248,11 @@ internal sealed class TrayApp : ApplicationContext
             _tray.Dispose();
             _icon.Dispose();
             _overlay?.Dispose();
+            _recordSelect?.Close();
+            _prepareDelay.Dispose();
             _prepared?.Cancel();
+            _recording?.Abort();
+            foreach (var f in Application.OpenForms.OfType<RecordingResultForm>().ToList()) f.DiscardOnExit();
         }
         base.Dispose(disposing);
     }

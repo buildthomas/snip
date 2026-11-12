@@ -10,10 +10,9 @@ namespace Snip.Tests;
 // Opt-in because it shows a window and takes ~25 s: SNIP_BENCH=1 dotnet test --filter RecordingBenchmark --logger "console;verbosity=detailed"
 public class RecordingBenchmark(ITestOutputHelper output)
 {
-    [Fact]
+    [OptInFact("SNIP_BENCH")]
     public void Measure()
     {
-        if (Environment.GetEnvironmentVariable("SNIP_BENCH") != "1") return;
         var area = Screen.PrimaryScreen!.Bounds;
         foreach (var scrolling in new[] { false, true })
         {

@@ -21,6 +21,23 @@ internal static class Native
         if (attached) AttachThreadInput(me, fgThread, false);
     }
 
+    public static void SquareCorners(IntPtr hwnd)
+    {
+        var square = 1;
+        DwmSetWindowAttribute(hwnd, 33 /* WINDOW_CORNER_PREFERENCE: DONOTROUND */, ref square, sizeof(int));
+    }
+
+    public static void DarkTitleBar(IntPtr hwnd)
+    {
+        var dark = 1;
+        DwmSetWindowAttribute(hwnd, 20 /* USE_IMMERSIVE_DARK_MODE */, ref dark, sizeof(int));
+    }
+
+    [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
+    [DllImport("user32.dll")] public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint mods, uint vk);
+    [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+    public const int WM_HOTKEY = 0x0312;
+
     public const int WH_KEYBOARD_LL = 13;
     public const int WM_KEYDOWN = 0x0100;
     public const int WM_KEYUP = 0x0101;

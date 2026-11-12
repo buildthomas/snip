@@ -4,9 +4,7 @@ using Xunit.Abstractions;
 
 namespace Snip.Tests;
 
-// Records system sound while a quiet 440 Hz tone plays after silence, pauses, and plays again, then checks the
-// audio handed to the encoder: both tones are there in full, never doubled up, and free of clicks. Needs a quiet PC and makes
-// noise, so it's opt-in: SNIP_SOUND_CHECK=1 dotnet test --filter SoundCheck --logger "console;verbosity=detailed"
+// Two tones after silence must reach the encoder whole, once, without clicks. Makes noise, so opt-in (SNIP_SOUND_CHECK=1).
 public class SoundCheck(ITestOutputHelper output)
 {
     private const int Rate = 48000, Amplitude = 3000;
@@ -22,10 +20,9 @@ public class SoundCheck(ITestOutputHelper output)
         return wav;
     }
 
-    [Fact]
+    [OptInFact("SNIP_SOUND_CHECK")]
     public void ToneAfterSilenceIsClean()
     {
-        if (Environment.GetEnvironmentVariable("SNIP_SOUND_CHECK") != "1") return;
         var path = Path.Combine(Path.GetTempPath(), $"snip-sound-{Guid.NewGuid():N}.mp4");
         var pcm = new List<short>();
         var rec = ScreenRecorder.Prepare(new Rectangle(0, 0, 320, 240), path, systemSound: true, microphone: false);

@@ -30,9 +30,7 @@ internal static class RecordingMath
         nowMs >= dueMs && (dirty || nowMs - lastWriteMs >= KeepAliveMs);
 }
 
-/// Records a screen rectangle to an H.264 MP4: DXGI Desktop Duplication for frames, the Media Foundation sink writer
-/// (hardware encoder when available) for encoding. Frames stay on the GPU when the device allows it, with a CPU copy
-/// path as fallback. Frames are only written when something changed.
+/// Records a screen rectangle to H.264 MP4: Desktop Duplication into a GPU texture, Media Foundation's (hardware) encoder.
 internal sealed unsafe class ScreenRecorder
 {
     private readonly Rectangle _rect;
@@ -55,14 +53,13 @@ internal sealed unsafe class ScreenRecorder
     public event Action<string>? AutoStopped;
     public TimeSpan Elapsed => _clock.Elapsed;
     public Rectangle Rect => _rect;
+    public string OutputPath => _path;
 
     private readonly bool _systemSound, _microphone;
     private readonly object _writerGate = new();
     private AudioCapture? _audio;
     private uint _audioStream;
     private long _startTimestamp;
-    private int _audioPeak;
-    internal int AudioPeak => _audioPeak;
     internal Action<short[], long>? AudioTap;
 
     private ScreenRecorder(Rectangle rect, string path, bool systemSound, bool microphone)
@@ -74,8 +71,7 @@ internal sealed unsafe class ScreenRecorder
         _thread = new Thread(Run) { IsBackground = true, Name = "Snip recorder" };
     }
 
-    /// Sets everything up in the background (device, duplication, encoder) without capturing anything yet, so a
-    /// recording can start the moment it's asked for. Begin starts it; Cancel throws the preparation away.
+    /// Sets up device, duplication and encoder in the background without capturing; Begin starts, Cancel discards.
     public static ScreenRecorder Prepare(Rectangle screenRect, string path, bool systemSound, bool microphone)
     {
         var r = new ScreenRecorder(RecordingMath.Even(screenRect), path, systemSound, microphone);
@@ -143,14 +139,21 @@ internal sealed unsafe class ScreenRecorder
     {
         Action? a;
         lock (_stateGate) { _started = true; a = _onStarted; _onStarted = null; }
-        a?.Invoke();
+        Notify(a);
     }
 
     private void MarkFailed(string message)
     {
         Action<string>? a;
         lock (_stateGate) { _failure = message; a = _onFailed; _onFailed = null; }
-        a?.Invoke(message);
+        if (a != null) Notify(() => a(message));
+    }
+
+    // Callbacks run on the recorder thread; one that throws must not take the process down.
+    private static void Notify(Action? a)
+    {
+        try { a?.Invoke(); }
+        catch (Exception ex) { Log.Write($"recording callback failed: {ex}"); }
     }
 
     public RecordingResult Stop()
@@ -216,13 +219,13 @@ internal sealed unsafe class ScreenRecorder
         {
             Log.Write($"recording failed: {ex}");
             _stopReason = $"Recording stopped: {ex.Message}";
-            AutoStopped?.Invoke(_stopReason);
+            var reason = _stopReason;
+            Notify(() => AutoStopped?.Invoke(reason));
         }
         if (_audio != null)
         {
             _audio.Stop(_lastTimestamp * AudioMixer.Rate / 10_000_000);
             if (_audio.Error != null) _stopReason ??= $"Sound: {_audio.Error}";
-            Log.Trace($"audio peak {_audioPeak}");
         }
         try
         {
@@ -235,6 +238,7 @@ internal sealed unsafe class ScreenRecorder
         }
         Cleanup();
         CoUninitialize();
+        if (_frames == 0) DeleteOutput();
     }
 
     private void Abandon()
@@ -242,7 +246,13 @@ internal sealed unsafe class ScreenRecorder
         Release(ref _writer);
         Cleanup();
         CoUninitialize();
-        try { File.Delete(_path); } catch (IOException) { }
+        DeleteOutput();
+    }
+
+    private void DeleteOutput()
+    {
+        try { File.Delete(_path); }
+        catch (Exception ex) { Log.Write($"couldn't delete the unused recording file: {ex.Message}"); }
     }
 
     private void Loop()
@@ -286,7 +296,8 @@ internal sealed unsafe class ScreenRecorder
                 if (FreeBytes(root) < 1L << 30)
                 {
                     _stopReason = "Recording stopped: less than 1 GB of disk space left.";
-                    AutoStopped?.Invoke(_stopReason);
+                    var reason = _stopReason;
+                    Notify(() => AutoStopped?.Invoke(reason));
                     break;
                 }
             }
@@ -395,7 +406,7 @@ internal sealed unsafe class ScreenRecorder
     private void SwitchToCpu()
     {
         Release(ref _writer);
-        try { File.Delete(_path); } catch (IOException) { }
+        DeleteOutput();
         _gpu = false;
         CallVoid(_context, 47, _staging, _accum);
         InitEncoder();
@@ -415,7 +426,6 @@ internal sealed unsafe class ScreenRecorder
     {
         if (pcm.Length == 0) return;
         AudioTap?.Invoke(pcm, firstFrame);
-        foreach (var v in pcm) _audioPeak = Math.Max(_audioPeak, Math.Abs((int)v));
         var len = pcm.Length * 2;
         IntPtr buffer = IntPtr.Zero, sample = IntPtr.Zero;
         try
@@ -587,7 +597,7 @@ internal sealed unsafe class ScreenRecorder
         {
             Log.Write($"recording: GPU encoder setup failed, using the CPU path: {ex.Message}");
             Release(ref _writer);
-            try { File.Delete(_path); } catch (IOException) { }
+            DeleteOutput();
             _gpu = false;
             InitEncoder();
         }

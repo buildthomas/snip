@@ -135,7 +135,6 @@ internal sealed class OverlayForm : Form
         UpdateHover(p);
     }
 
-
     // ---------- Layout ----------
 
     private int S(float v) => (int)Math.Round(v * _scale);

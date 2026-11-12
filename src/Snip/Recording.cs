@@ -10,29 +10,54 @@ internal static class RecordingFiles
 {
     public static string Directory => Path.Combine(Path.GetTempPath(), "Snip");
 
+    // The name is reserved by creating the file, so two recorders prepared within a second never share one.
     public static string NewPath()
     {
         System.IO.Directory.CreateDirectory(Directory);
         var name = $"Snip {DateTime.Now:yyyy-MM-dd HH.mm.ss}";
-        var path = Path.Combine(Directory, name + ".mp4");
-        for (int i = 2; File.Exists(path); i++) path = Path.Combine(Directory, $"{name} ({i}).mp4");
-        return path;
+        for (int i = 1; ; i++)
+        {
+            var path = Path.Combine(Directory, i == 1 ? name + ".mp4" : $"{name} ({i}).mp4");
+            try
+            {
+                using (new FileStream(path, FileMode.CreateNew)) { }
+                return path;
+            }
+            catch (IOException) when (File.Exists(path)) { }
+        }
     }
 
     public static void CleanUp()
     {
         try
         {
-            if (!System.IO.Directory.Exists(Directory)) return;
-            foreach (var f in System.IO.Directory.EnumerateFiles(Directory, "*.mp4")) TryDelete(f);
+            var dir = new DirectoryInfo(Directory);
+            if (!dir.Exists || dir.Attributes.HasFlag(FileAttributes.ReparsePoint)) return;
+            foreach (var f in dir.EnumerateFiles("*.mp4")) if (f.Extension == ".mp4") TryDelete(f.FullName);
         }
         catch (Exception ex) { Log.Write($"recording cleanup failed: {ex.Message}"); }
     }
 
-    public static void TryDelete(string path)
+    /// Returns the error, or null when the file is gone.
+    public static string? TryDelete(string path)
     {
-        try { File.Delete(path); }
-        catch (Exception ex) { Log.Write($"couldn't delete {Path.GetFileName(path)}: {ex.Message}"); }
+        try
+        {
+            File.Delete(path);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            Log.Write($"couldn't delete {Path.GetFileName(path)}: {ex.Message}");
+            return ex.Message;
+        }
+    }
+
+    public static void Delete(string path, IWin32Window? owner)
+    {
+        if (TryDelete(path) is string error)
+            MessageBox.Show(owner, $"Couldn't delete the recording (is it open in a player?). It stays in {Directory} until Snip next starts.\n\n{error}",
+                "Snip", MessageBoxButtons.OK, MessageBoxIcon.Warning);
     }
 
     public static string FormatDuration(TimeSpan t) => t.TotalHours >= 1 ? t.ToString(@"h\:mm\:ss") : t.ToString(@"m\:ss");
@@ -47,6 +72,7 @@ internal sealed class RecordingController
     private readonly Settings _settings;
     private readonly RecordingBar _bar;
     private readonly RecordingBorder _border;
+    private readonly SynchronizationContext _ui = SynchronizationContext.Current!;
     private bool _done;
 
     public event Action? Ended;
@@ -61,7 +87,7 @@ internal sealed class RecordingController
         var hotkeys = settings.PrintScreenEnabled ? "Win+Shift+S or PrtSc" : "Win+Shift+S";
         _bar = new RecordingBar(recorder, scale, Stop, Discard, settings.RecordSystemSound, settings.RecordMicrophone, hotkeys);
         _bar.PlaceNear(r);
-        recorder.AutoStopped += _ => _bar.BeginInvoke(Stop);
+        recorder.AutoStopped += _ => _ui.Post(_ => Stop(), null);
     }
 
     /// Shows the border and bar right away and begins the (ideally already prepared) recorder.
@@ -70,8 +96,8 @@ internal sealed class RecordingController
         var c = new RecordingController(recorder, settings);
         c._border.Show();
         c._bar.Show();
-        recorder.WhenStarted(() => c._bar.BeginInvoke(c._bar.MarkStarted));
-        recorder.WhenFailed(message => c._bar.BeginInvoke(() => c.Fail(message)));
+        recorder.WhenStarted(() => c._ui.Post(_ => { if (!c._done) c._bar.MarkStarted(); }, null));
+        recorder.WhenFailed(message => c._ui.Post(_ => c.Fail(message), null));
         recorder.Begin();
         return c;
     }
@@ -89,6 +115,23 @@ internal sealed class RecordingController
     public void Stop() => Finish(discard: false);
 
     private void Discard() => Finish(discard: true);
+
+    /// Snip is exiting: stop and throw the recording away.
+    public void Abort()
+    {
+        if (_done) return;
+        _done = true;
+        _border.Close();
+        _bar.Close();
+        try
+        {
+            var result = _recorder.Stop();
+            result.LastFrame?.Dispose();
+        }
+        catch (Exception ex) { Log.Write($"recording abort: {ex.Message}"); }
+        RecordingFiles.TryDelete(_recorder.OutputPath);
+        Ended?.Invoke();
+    }
 
     private void Finish(bool discard)
     {
@@ -108,7 +151,9 @@ internal sealed class RecordingController
 
         if (discard || result == null)
         {
-            if (result != null) { result.LastFrame?.Dispose(); RecordingFiles.TryDelete(result.Path); }
+            result?.LastFrame?.Dispose();
+            if (result == null) RecordingFiles.TryDelete(_recorder.OutputPath);
+            else RecordingFiles.Delete(result.Path, null);
             if (error != null) MessageBox.Show($"The recording failed.\n\n{error}", "Snip", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
@@ -121,6 +166,7 @@ internal static class RecordingUi
 {
     public static readonly Color Back = Color.FromArgb(32, 32, 34);
     public static readonly Color Red = Color.FromArgb(230, 40, 40);
+    public static readonly Color Accent = Color.FromArgb(0, 150, 255);
 
     public static float ScaleAt(Point p)
     {
@@ -131,30 +177,23 @@ internal static class RecordingUi
     // Keeps Snip's own recording chrome out of every screen capture, including the recording itself.
     public static void ExcludeFromCapture(IntPtr hwnd) => SetWindowDisplayAffinity(hwnd, 0x11);
 
-    [DllImport("dwmapi.dll")] internal static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
     [DllImport("user32.dll")] private static extern IntPtr MonitorFromPoint(Point pt, uint flags);
     [DllImport("shcore.dll")] private static extern int GetDpiForMonitor(IntPtr monitor, int type, out uint dpiX, out uint dpiY);
     [DllImport("user32.dll")] private static extern bool SetWindowDisplayAffinity(IntPtr hwnd, uint affinity);
 }
 
-/// One frame-shaped window just outside the recorded area; the hole lets clicks through to the apps inside.
-internal sealed class RecordingBorder : Form
+/// Borderless, topmost and never activated; kept out of every screen capture, including the recording itself.
+internal abstract class ChromeForm : Form
 {
-    private readonly bool _excludeFromCapture;
-
-    public RecordingBorder(Rectangle area, int thickness, bool excludeFromCapture = true)
+    protected ChromeForm()
     {
-        _excludeFromCapture = excludeFromCapture;
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.Manual;
         ShowInTaskbar = false;
         TopMost = true;
-        BackColor = RecordingUi.Red;
-        Bounds = Rectangle.Inflate(area, thickness, thickness);
-        var frame = new Region(new Rectangle(Point.Empty, Size));
-        frame.Exclude(new Rectangle(thickness, thickness, area.Width, area.Height));
-        Region = frame;
     }
+
+    protected virtual int ExtraExStyle => 0;
 
     protected override bool ShowWithoutActivation => true;
 
@@ -163,7 +202,7 @@ internal sealed class RecordingBorder : Form
         get
         {
             var cp = base.CreateParams;
-            cp.ExStyle |= 0x80 /* TOOLWINDOW */ | 0x08000000 /* NOACTIVATE */;
+            cp.ExStyle |= 0x80 /* TOOLWINDOW */ | 0x08000000 /* NOACTIVATE */ | ExtraExStyle;
             return cp;
         }
     }
@@ -171,16 +210,44 @@ internal sealed class RecordingBorder : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        var square = 1; // DWMWCP_DONOTROUND
-        DwmSetWindowAttribute(Handle, 33 /* WINDOW_CORNER_PREFERENCE */, ref square, sizeof(int));
-        if (_excludeFromCapture) RecordingUi.ExcludeFromCapture(Handle);
+        RecordingUi.ExcludeFromCapture(Handle);
     }
 
-    [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
+    protected override void WndProc(ref Message m)
+    {
+        if (m.Msg == Native.WM_DPICHANGED) { m.Result = IntPtr.Zero; return; }
+        base.WndProc(ref m);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        var region = disposing ? Region : null;
+        base.Dispose(disposing);
+        region?.Dispose();
+    }
+}
+
+/// One frame-shaped window just outside the recorded area; the hole lets clicks through to the apps inside.
+internal sealed class RecordingBorder : ChromeForm
+{
+    public RecordingBorder(Rectangle area, int thickness)
+    {
+        BackColor = RecordingUi.Red;
+        Bounds = Rectangle.Inflate(area, thickness, thickness);
+        var frame = new Region(new Rectangle(Point.Empty, Size));
+        frame.Exclude(new Rectangle(thickness, thickness, area.Width, area.Height));
+        Region = frame;
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        Native.SquareCorners(Handle);
+    }
 }
 
 /// Floating bar with the elapsed time, Stop and Discard. Never takes focus from the app being recorded.
-internal sealed class RecordingBar : Form
+internal sealed class RecordingBar : ChromeForm
 {
     private readonly ScreenRecorder _recorder;
     private readonly float _s;
@@ -197,10 +264,6 @@ internal sealed class RecordingBar : Form
         _s = scale;
         _soundIcons = (systemSound ? "\uE767" : "") + (microphone ? "\uE720" : "");
         _symbols = new Font("Segoe MDL2 Assets", 13f * _s, GraphicsUnit.Pixel);
-        FormBorderStyle = FormBorderStyle.None;
-        StartPosition = FormStartPosition.Manual;
-        ShowInTaskbar = false;
-        TopMost = true;
         BackColor = RecordingUi.Back;
         _font = new Font("Segoe UI", 13f * _s, GraphicsUnit.Pixel);
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint, true);
@@ -230,28 +293,9 @@ internal sealed class RecordingBar : Form
         Invalidate();
     }
 
-    protected override bool ShowWithoutActivation => true;
-
-    protected override CreateParams CreateParams
-    {
-        get
-        {
-            var cp = base.CreateParams;
-            cp.ExStyle |= 0x80 /* TOOLWINDOW */ | 0x08000000 /* NOACTIVATE */;
-            return cp;
-        }
-    }
-
-    protected override void OnHandleCreated(EventArgs e)
-    {
-        base.OnHandleCreated(e);
-        RecordingUi.ExcludeFromCapture(Handle);
-    }
-
     public void PlaceNear(Rectangle area) => Location = Place(area, Screen.FromRectangle(area).WorkingArea, Size, S(8));
 
-    /// Below the area, else above it, else inside its bottom-right corner; always within the work area (never under
-    /// the taskbar), so the controls stay visible and clickable when recording a whole screen or a maximized window.
+    /// Below the area, else above it, else inside its bottom-right corner; always within the work area.
     public static Point Place(Rectangle area, Rectangle work, Size size, int gap)
     {
         int x = area.Right - size.Width, y = area.Bottom + gap;
@@ -349,6 +393,7 @@ internal sealed class RecordingResultForm : Form
     private readonly RecordingResult _result;
     private readonly Settings _settings;
     private readonly ToolTip _tips = new();
+    private readonly Font _uiFont = new("Segoe UI", 9.5f);
     private bool _copied, _resolved;
 
     public RecordingResultForm(RecordingResult result, Settings settings)
@@ -366,7 +411,7 @@ internal sealed class RecordingResultForm : Form
         KeyPreview = true;
         BackColor = RecordingUi.Back;
         ForeColor = Color.White;
-        Font = new Font("Segoe UI", 9.5f);
+        Font = _uiFont;
         ShowIcon = false;
 
         var preview = new PictureBox
@@ -417,8 +462,7 @@ internal sealed class RecordingResultForm : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        var dark = 1;
-        DwmSetWindowAttribute(Handle, 20 /* USE_IMMERSIVE_DARK_MODE */, ref dark, sizeof(int));
+        Native.DarkTitleBar(Handle);
     }
 
     protected override void OnShown(EventArgs e)
@@ -426,8 +470,6 @@ internal sealed class RecordingResultForm : Form
         base.OnShown(e);
         Native.ForceForeground(this);
     }
-
-    [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
 
     protected override void OnKeyDown(KeyEventArgs e)
     {
@@ -485,7 +527,7 @@ internal sealed class RecordingResultForm : Form
         }
         _settings.LastSaveDirectory = Path.GetDirectoryName(dlg.FileName);
         _settings.Save();
-        if (!_copied) RecordingFiles.TryDelete(_result.Path);
+        if (!_copied) RecordingFiles.Delete(_result.Path, this);
         _resolved = true;
         Close();
     }
@@ -501,7 +543,7 @@ internal sealed class RecordingResultForm : Form
 
     private void Discard()
     {
-        RecordingFiles.TryDelete(_result.Path);
+        RecordingFiles.Delete(_result.Path, this);
         _resolved = true;
         Close();
     }
@@ -513,15 +555,23 @@ internal sealed class RecordingResultForm : Form
             var answer = MessageBox.Show(this, "Discard this recording?", "Snip", MessageBoxButtons.YesNo, MessageBoxIcon.Question,
                 MessageBoxDefaultButton.Button2);
             if (answer != DialogResult.Yes) { e.Cancel = true; return; }
-            RecordingFiles.TryDelete(_result.Path);
+            RecordingFiles.Delete(_result.Path, this);
             _resolved = true;
         }
         base.OnFormClosing(e);
     }
 
+    /// Snip is exiting: a recording nobody saved or copied is deleted.
+    public void DiscardOnExit()
+    {
+        if (!_resolved) RecordingFiles.TryDelete(_result.Path);
+        _resolved = true;
+        Close();
+    }
+
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { _result.LastFrame?.Dispose(); _tips.Dispose(); }
+        if (disposing) { _result.LastFrame?.Dispose(); _tips.Dispose(); _uiFont.Dispose(); }
         base.Dispose(disposing);
     }
 }

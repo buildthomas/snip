@@ -3,13 +3,13 @@ using System.Runtime.InteropServices;
 
 namespace Snip;
 
-/// Places captured packets on the recording's timeline by their timestamps, so sources that pause (system sound
-/// sends nothing while silent) or drift stay in sync with the video. Sources are summed; anything missing is silence.
+/// Sums sources on the recording's timeline (a ring buffer of the next 4 s); anything missing is silence.
 internal sealed class AudioMixer
 {
     public const int Rate = 48000, Channels = 2;
     private const int WindowFrames = Rate * 4;
     private readonly float[] _mix = new float[WindowFrames * Channels];
+    private int _head;
 
     public long Written { get; private set; }
 
@@ -22,8 +22,9 @@ internal sealed class AudioMixer
             var at = firstFrame + i - Written;
             if (at < 0) continue;
             if (at >= WindowFrames) break;
-            _mix[at * Channels] += samples[i * Channels];
-            _mix[at * Channels + 1] += samples[i * Channels + 1];
+            var j = (int)((_head + at) % WindowFrames) * Channels;
+            _mix[j] += samples[i * Channels];
+            _mix[j + 1] += samples[i * Channels + 1];
         }
     }
 
@@ -32,18 +33,22 @@ internal sealed class AudioMixer
     {
         var frames = (int)Math.Clamp(frame - Written, 0, WindowFrames);
         var pcm = new short[frames * Channels];
-        for (int i = 0; i < pcm.Length; i++) pcm[i] = (short)Math.Round(Math.Clamp(_mix[i], -1f, 1f) * 32767f);
-        Array.Copy(_mix, frames * Channels, _mix, 0, _mix.Length - frames * Channels);
-        Array.Clear(_mix, _mix.Length - frames * Channels, frames * Channels);
+        for (int f = 0; f < frames; f++)
+        {
+            var j = (_head + f) % WindowFrames * Channels;
+            for (int c = 0; c < Channels; c++)
+            {
+                pcm[f * Channels + c] = (short)Math.Round(Math.Clamp(_mix[j + c], -1f, 1f) * 32767f);
+                _mix[j + c] = 0;
+            }
+        }
+        _head = (_head + frames) % WindowFrames;
         Written += frames;
         return pcm;
     }
 }
 
-/// Packets follow on from the previous one: right after silence Windows pre-fills its buffer and the stamps race ahead
-/// of a sound that is in fact continuous. The stamp wins where Windows flags a discontinuity, or where following on
-/// would put sound well before it even arrived (the stream paused without saying so); for large drift behind, the
-/// part that would overlap is dropped.
+/// Packets follow on from the previous one (stamps race ahead after silence); the stamp wins on a flagged or unflagged pause.
 internal static class AudioTimeline
 {
     public const long MaxLagFrames = AudioMixer.Rate * 150 / 1000;
@@ -255,8 +260,7 @@ internal sealed unsafe class AudioCapture
         }
     }
 
-    /// Timeline frame of a packet stamped in 100 ns QPC units; the start is a raw QPC tick count. Converted without
-    /// multiplying the raw counter, which overflows after a day or two of uptime.
+    // Never multiplies the raw QPC counter, which overflows after a day or two of uptime.
     public static long FrameAt(ulong qpc100ns, long startTicks, long ticksPerSecond)
     {
         var start100ns = startTicks / ticksPerSecond * 10_000_000 + startTicks % ticksPerSecond * 10_000_000 / ticksPerSecond;
