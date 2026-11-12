@@ -23,7 +23,7 @@ picture.
 
 | | Windows | macOS |
 |---|---|---|
-| Capture | **Win+Shift+S** or **PrtSc**, or left-click the tray icon | **⇧⌘2** by default (any combination you like, see below), or **Capture** in the menu-bar menu |
+| Capture | **Win+Shift+S** or **PrtSc**, or left-click the tray icon (**Win+Shift+R** records a video) | **⇧⌘2** by default (any combination you like, see below), or **Capture** in the menu-bar menu |
 | Copy and close | **Ctrl+C** or **Enter** | **⌘C** or **Return** |
 | Save as (opens in the last folder used) | **Ctrl+S** (PNG/JPG/BMP) | **⌘S** (PNG/JPEG) |
 | Undo / redo | **Ctrl+Z** / **Ctrl+Y** | **⌘Z** / **⇧⌘Z** (or your own App Shortcuts) |
@@ -75,29 +75,34 @@ Every redaction is flattened into the copied or saved image; there is no hidden 
 
 ### Record a video (Windows for now)
 
-Select an area, then press the red **Record** button in the action bar. A thin red border marks what's being
-recorded, and a small bar next to it shows the time with **Stop** and **Discard** (drag it anywhere; it stays out of
-the video). Pressing the capture hotkey again, or clicking the tray icon, also stops. The pointer is included and there's no time limit.
+Press **Win+Shift+R** (or **Record video** in the tray menu). The screen keeps moving under a light dim: drag an
+area, click a window to take exactly that window, or press **Ctrl+A** for the whole display; drag the handles or
+inside the selection to adjust. Then press **Record** or **Enter**. **Esc** or right-click cancels.
 
-Sound is off unless you turn it on: the speaker button next to **Record** adds **system sound** (what you hear), the
-microphone button adds your **microphone**. Each is a separate on/off switch, remembered for next time, and the
-recording bar shows which ones are on. Sound adds about 0.7 MB per minute (AAC, 96 kbps).
+A thin red border marks what's being recorded, and a small bar next to it shows the time with **Stop** and
+**Discard** (drag it anywhere; it stays out of the video). **Win+Shift+R** again, the capture hotkey, or clicking the
+tray icon also stops. The pointer is included and there's no time limit.
+
+Sound is off unless you turn it on, with the buttons next to **Record**: the speaker (**S**) adds **system sound**
+(what you hear), the microphone (**M**) adds your **microphone**. Each is a separate on/off switch, remembered for next
+time, and the recording bar shows which ones are on. Sound adds about 0.7 MB per minute (AAC, 96 kbps).
 
 When you stop, a window shows the last frame, the length and the file size: **Copy** puts the MP4 on the clipboard as
 a file (paste it into a chat or an email), **Save as...** writes it where you like, **Play** opens it in your video
 player, **Discard** deletes it. Recordings are H.264 MP4s encoded on the graphics card where possible, so the CPU
-stays nearly idle, and they're small: about 0.5-1.5 MB for 10 seconds of a 2560x1440 screen. Record works before you
-draw anything; annotations aren't part of videos yet.
+stays nearly idle, and they're small: about 0.5-1.5 MB for 10 seconds of a 2560x1440 screen. Annotations aren't part of
+videos yet.
 
 ### Tray and menu-bar menus
 
-- **Windows tray:** Capture, Use PrintScreen key (on/off), Start with Windows (on/off), Open settings folder, Exit.
+- **Windows tray:** Capture, Record video, Use PrintScreen key (on/off), Start with Windows (on/off), Open settings folder, Exit.
 - **macOS menu bar:** Capture, current hotkey and **Change hotkey…**, Start at login, Debug logging, Open log,
   Write diagnostics to log, Quit.
 
 ### Choosing the hotkey
 
-- **Windows:** Win+Shift+S (taken over from the Snipping Tool) and PrtSc (can be turned off in the tray menu).
+- **Windows:** Win+Shift+S and Win+Shift+R (screenshot and recording, both taken over from the Snipping Tool) and
+  PrtSc (can be turned off in the tray menu).
 - **macOS:** **Change hotkey…** records any combination with ⌘, ⌥ or ⌃ (press it, then Save). From a terminal:
   `~/Applications/Snip.app/Contents/MacOS/Snip --set-hotkey cmd+shift+s`. Combinations another app or macOS already
   owns are refused and the previous hotkey stays; to use ⇧⌘3/4/5, turn the system screenshot shortcut off first

@@ -14,6 +14,7 @@ internal sealed class TrayApp : ApplicationContext
     private readonly ToolStripMenuItem _startupItem;
     private readonly ToolStripMenuItem _printScreenItem;
     private OverlayForm? _overlay;
+    private RecordSelectOverlay? _recordSelect;
     private RecordingController? _recording;
     private Rectangle? _pendingRecording;
     private ScreenRecorder? _prepared;
@@ -38,6 +39,7 @@ internal sealed class TrayApp : ApplicationContext
         _printScreenItem = new ToolStripMenuItem("Use PrintScreen key", null, (_, _) => TogglePrintScreen());
         var menu = new ContextMenuStrip();
         menu.Items.Add(new ToolStripMenuItem("Capture  (Win+Shift+S / PrtSc)", null, (_, _) => Capture()));
+        menu.Items.Add(new ToolStripMenuItem("Record video  (Win+Shift+R)", null, (_, _) => Record()));
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(_printScreenItem);
         menu.Items.Add(_startupItem);
@@ -50,10 +52,10 @@ internal sealed class TrayApp : ApplicationContext
             _printScreenItem.Checked = _settings.PrintScreenEnabled;
         };
 
-        _tray = new NotifyIcon { Icon = _icon, Text = "Snip - Win+Shift+S or PrtSc", ContextMenuStrip = menu, Visible = true };
+        _tray = new NotifyIcon { Icon = _icon, Text = "Snip - Win+Shift+S or PrtSc; record Win+Shift+R", ContextMenuStrip = menu, Visible = true };
         _tray.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) Capture(); };
 
-        _hook = new KeyboardHook(Capture) { PrintScreenEnabled = _settings.PrintScreenEnabled };
+        _hook = new KeyboardHook(record => { if (record) Record(); else Capture(); }) { PrintScreenEnabled = _settings.PrintScreenEnabled };
         _signalWait = ThreadPool.RegisterWaitForSingleObject(captureSignal, (_, _) => _ui.Post(_ => Capture(), null), null, -1, false);
 
         SystemEvents.SessionSwitch += OnSessionSwitch;
@@ -87,9 +89,9 @@ internal sealed class TrayApp : ApplicationContext
             _recording.Stop();
             return;
         }
-        if (_overlay != null)
+        if (_overlay != null || _recordSelect != null)
         {
-            _overlay.Activate();
+            ((Form?)_overlay ?? _recordSelect)!.Activate();
             return;
         }
 
@@ -116,8 +118,6 @@ internal sealed class TrayApp : ApplicationContext
             _tray.ShowBalloonTip(4000, "Snip", $"Capture failed: {ex.Message}", ToolTipIcon.Warning);
             return;
         }
-        _overlay.RecordRequested += area => _pendingRecording = area;
-        _overlay.RecordHovered += area => PrepareRecording(area);
         _overlay.Shown += (_, _) => Log.Trace($"overlay shown: capture {tCapture} ms, windows {tWindows} ms, form {tForm} ms, shown {sw.ElapsedMilliseconds} ms");
         _overlay.FormClosed += (_, e) =>
         {
@@ -131,6 +131,35 @@ internal sealed class TrayApp : ApplicationContext
             GC.Collect();
             GC.WaitForPendingFinalizers();
             _hook.Reinstall();
+        };
+        _overlay.Show();
+    }
+
+    /// Win+Shift+R: pick an area over the live screen, or stop the recording that's running.
+    public void Record()
+    {
+        if (_recording != null)
+        {
+            _recording.Stop();
+            return;
+        }
+        if (_overlay != null || _recordSelect != null)
+        {
+            ((Form?)_recordSelect ?? _overlay)!.Activate();
+            return;
+        }
+        var previousForeground = Native.GetForegroundWindow();
+        var screen = SystemInformation.VirtualScreen;
+        _recordSelect = new RecordSelectOverlay(screen, WindowFinder.VisibleWindows(screen), _settings);
+        _recordSelect.SelectionSettled += PrepareRecording;
+        _recordSelect.RecordRequested += area => _pendingRecording = area;
+        _recordSelect.FormClosed += (_, _) =>
+        {
+            _recordSelect.Dispose();
+            _recordSelect = null;
+            _settings.Save();
+            if (previousForeground != IntPtr.Zero) Native.SetForegroundWindow(previousForeground);
+            _hook.Reinstall();
             if (_pendingRecording is Rectangle area)
             {
                 _pendingRecording = null;
@@ -142,7 +171,7 @@ internal sealed class TrayApp : ApplicationContext
                 _prepared = null;
             }
         };
-        _overlay.Show();
+        _recordSelect.Show();
     }
 
     private void PrepareRecording(Rectangle area)

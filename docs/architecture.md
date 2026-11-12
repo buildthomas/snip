@@ -72,12 +72,16 @@ macOS:   hotkey event ─► Capture.captureAll (SCScreenshotManager per display
 ## Screen recording (Windows)
 
 ```
-hover Record ─► ScreenRecorder.Prepare (device, duplication, encoder; own thread)
-click Record ─► overlay closes, border + bar shown ─► Begin (first frame ≥ 60 ms later) ─► MP4 in %TEMP%\Snip ─► RecordingResultForm
+Win+Shift+R ─► RecordSelectOverlay over the live screen ─► selection settles ─► ScreenRecorder.Prepare (own thread)
+Record/Enter ─► overlay closes, border + bar shown ─► Begin (first frame ≥ 60 ms later) ─► MP4 in %TEMP%\Snip ─► RecordingResultForm
 ```
 
-- **Snappy start:** setup (GPU device ~150-250 ms, hardware encoder ~200-300 ms) starts when the pointer reaches the
-  Record button and is thrown away if it isn't clicked. With it prepared, capture runs ~60 ms after the click; without,
+- **Live selection:** four windows, all excluded from capture: a dim layer (uniform alpha, click-through, a region
+  hole over the selection), a nearly transparent input window on top that takes mouse and keys, the selection frame
+  (border, handles, size label as one region-shaped window) and the setup bar. One per-pixel-alpha window would need a
+  virtual-screen-sized bitmap (tens of MB on multi-monitor setups) redrawn on every mouse move.
+- **Snappy start:** setup (GPU device ~150-250 ms, hardware encoder ~200-300 ms) starts as soon as a selection settles
+  (or a sound toggle changes) and is thrown away if recording doesn't start. With it prepared, capture runs ~60 ms after the click; without,
   ~350 ms. The border and bar appear immediately either way; the bar's dot turns red once frames are being captured.
   Sound devices are only opened on Begin, so the microphone indicator never lights up for a preparation.
 
@@ -103,8 +107,8 @@ click Record ─► overlay closes, border + bar shown ─► Begin (first frame
 
 ### Windows
 
-- Win+Shift+S belongs to the shell, so `RegisterHotKey` can't claim it. A low-level keyboard hook swallows the S
-  key-down/up only; Win and Shift pass through. A tagged dummy key (VK 0xE8, `dwExtraInfo` = "SNIP") is injected so the
+- Win+Shift+S and Win+Shift+R (record) belong to the shell, so `RegisterHotKey` can't claim them. A low-level keyboard
+  hook swallows the S or R key-down/up only; Win and Shift pass through. A tagged dummy key (VK 0xE8, `dwExtraInfo` = "SNIP") is injected so the
   Start menu doesn't open when Win is released.
 - PrtSc without modifiers is taken too (toggle in the tray). Alt+PrtSc, Win+PrtSc and Ctrl+PrtSc stay with Windows.
 - All decisions live in `HotkeyFilter`, a pure state machine fed (vk, down/up, timestamp, modifiers). It handles key

@@ -3,7 +3,7 @@ using static Snip.Native;
 
 namespace Snip;
 
-// Low-level hook so Win+Shift+S can be taken from the shell, which RegisterHotKey cannot do.
+// Low-level hook so Win+Shift+S and Win+Shift+R can be taken from the shell, which RegisterHotKey cannot do.
 // The callback runs for every keystroke system-wide, so it lives on its own thread (never blocked by
 // overlay painting) and does nothing beyond a few key-state checks: no I/O, no logging.
 internal sealed class KeyboardHook : IDisposable
@@ -12,7 +12,7 @@ internal sealed class KeyboardHook : IDisposable
 
     private readonly LowLevelKeyboardProc _proc;
     private readonly SynchronizationContext _ui;
-    private readonly Action _onTrigger;
+    private readonly Action<bool> _onTrigger;
     private readonly Thread _thread;
     private readonly HotkeyFilter _filter = new();
     private uint _threadId;
@@ -25,7 +25,8 @@ internal sealed class KeyboardHook : IDisposable
     }
     private bool _printScreen = true;
 
-    public KeyboardHook(Action onTrigger)
+    /// The trigger gets true for Win+Shift+R (record), false for a screenshot.
+    public KeyboardHook(Action<bool> onTrigger)
     {
         _onTrigger = onTrigger;
         _ui = SynchronizationContext.Current ?? throw new InvalidOperationException("Create the hook on the UI thread.");
@@ -69,7 +70,7 @@ internal sealed class KeyboardHook : IDisposable
         if (nCode >= 0)
         {
             var vk = (uint)Marshal.ReadInt32(lParam);
-            if (vk == HotkeyFilter.VkS || vk == HotkeyFilter.VkSnapshot)
+            if (vk == HotkeyFilter.VkS || vk == HotkeyFilter.VkR || vk == HotkeyFilter.VkSnapshot)
             {
                 var msg = (int)wParam;
                 var isDown = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
@@ -84,7 +85,7 @@ internal sealed class KeyboardHook : IDisposable
                     _filter.PrintScreenEnabled = PrintScreenEnabled;
                     var d = _filter.OnKey(vk, isDown, (uint)Marshal.ReadInt32(lParam, 12), mods);
                     if (d.SuppressStartMenu) SuppressStartMenu();
-                    if (d.Fire) _ui.Post(_ => _onTrigger(), null);
+                    if (d.Fire) _ui.Post(_ => _onTrigger(d.Record), null);
                     if (d.Swallow) return (IntPtr)1;
                 }
             }

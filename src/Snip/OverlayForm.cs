@@ -167,9 +167,6 @@ internal sealed class OverlayForm : Form
         UpdateSecureButton();
         for (int i = 0; i < EmojiFont.Set.Length; i++)
             _emojiButtons.Add(new ToolButton { Kind = ButtonKind.EmojiPick, Option = i, Tip = "" });
-        _actionButtons.Add(new ToolButton { Kind = ButtonKind.SystemSound, Tip = "Record system sound (on/off)" });
-        _actionButtons.Add(new ToolButton { Kind = ButtonKind.Microphone, Tip = "Record microphone (on/off)" });
-        _actionButtons.Add(new ToolButton { Kind = ButtonKind.Record, Tip = "Record video of this area" });
         _actionButtons.Add(new ToolButton { Kind = ButtonKind.Copy, Tip = "Copy (Ctrl+C)" });
         _actionButtons.Add(new ToolButton { Kind = ButtonKind.Save, Tip = "Save as (Ctrl+S)" });
         _actionButtons.Add(new ToolButton { Kind = ButtonKind.Close, Tip = "Close (Esc)" });
@@ -456,9 +453,7 @@ internal sealed class OverlayForm : Form
                 || b.Kind == ButtonKind.RedactStyle && b.Option == (int)_redactStyle
                 || b.Kind == ButtonKind.RedactShape && b.Option == (int)_redactShape
                 || b.Kind == ButtonKind.RedactSecure
-                || b.Kind == ButtonKind.EmojiPick && b.Option == _emojiIndex
-                || b.Kind == ButtonKind.SystemSound && _settings.RecordSystemSound
-                || b.Kind == ButtonKind.Microphone && _settings.RecordMicrophone;
+                || b.Kind == ButtonKind.EmojiPick && b.Option == _emojiIndex;
             if (active || b == _hoverButton)
             {
                 var fill = b.Kind == ButtonKind.RedactSecure && !_redactSecure ? Warning : active ? Accent : Color.FromArgb(70, 255, 255, 255);
@@ -469,7 +464,6 @@ internal sealed class OverlayForm : Form
             {
                 ButtonKind.Undo => _annotations.Count > 0 || _editing != null,
                 ButtonKind.Redo => _redo.Count > 0,
-                ButtonKind.Record => _annotations.Count == 0 && _editing == null,
                 _ => true,
             };
             Icons.Draw(g, b, _color, enabled);
@@ -855,7 +849,6 @@ internal sealed class OverlayForm : Form
         {
             _hoverButton = button;
             InvalidateChrome();
-            if (button?.Kind == ButtonKind.Record) HoverRecord();
         }
         UpdatePreview(p, button);
         Cursor = CursorFor(p, button);
@@ -1120,9 +1113,6 @@ internal sealed class OverlayForm : Form
             case ButtonKind.Color: _paletteOpen = !_paletteOpen; InvalidateChrome(); break;
             case ButtonKind.Undo: Undo(); break;
             case ButtonKind.Redo: Redo(); break;
-            case ButtonKind.Record: RequestRecording(); break;
-            case ButtonKind.SystemSound: _settings.RecordSystemSound = !_settings.RecordSystemSound; InvalidateChrome(); break;
-            case ButtonKind.Microphone: _settings.RecordMicrophone = !_settings.RecordMicrophone; InvalidateChrome(); break;
             case ButtonKind.Copy: Copy(); break;
             case ButtonKind.Save: SaveAs(); break;
             case ButtonKind.Close: Close(); break;
@@ -1334,32 +1324,6 @@ internal sealed class OverlayForm : Form
     }
 
     // ---------- Output ----------
-
-    /// Raised with the selection in screen coordinates when the user asks to record it; the overlay then closes.
-    public event Action<Rectangle>? RecordRequested;
-
-    /// Raised when the pointer moves onto the Record button, so the recorder can get ready before the click.
-    public event Action<Rectangle>? RecordHovered;
-
-    private void HoverRecord()
-    {
-        if (_selection is not Rectangle sel || sel.Width <= 0 || sel.Height <= 0 || _annotations.Count > 0 || _editing != null) return;
-        sel.Offset(Left, Top);
-        RecordHovered?.Invoke(sel);
-    }
-
-    private void RequestRecording()
-    {
-        if (_selection is not Rectangle sel || sel.Width <= 0 || sel.Height <= 0) return;
-        if (_annotations.Count > 0 || _editing != null)
-        {
-            ShowBubble("Recording uses the live screen - undo your drawings first", PointToClient(MousePosition), dot: false, ms: 2500);
-            return;
-        }
-        sel.Offset(Left, Top);
-        RecordRequested?.Invoke(sel);
-        Close();
-    }
 
     private Bitmap? Compose() =>
         _selection is Rectangle sel && sel.Width > 0 && sel.Height > 0 ? Renderer.Compose(_capture, sel, _annotations) : null;

@@ -3,20 +3,20 @@ namespace Snip;
 [Flags]
 internal enum Mods { None = 0, Shift = 1, Ctrl = 2, Alt = 4, Win = 8 }
 
-internal readonly record struct HotkeyDecision(bool Swallow, bool Fire, bool SuppressStartMenu);
+internal readonly record struct HotkeyDecision(bool Swallow, bool Fire, bool SuppressStartMenu, bool Record = false);
 
 // Pure keystroke state machine behind KeyboardHook, kept free of Win32 calls so it can be unit tested.
 internal sealed class HotkeyFilter
 {
-    public const uint VkS = 0x53, VkSnapshot = 0x2C;
+    public const uint VkS = 0x53, VkR = 0x52, VkSnapshot = 0x2C;
     // Key repeat fires at least every ~1 s while held, so an older swallowed press means its key-up was lost.
     public const uint StaleMs = 1500;
 
     private static readonly HotkeyDecision Pass = new(false, false, false);
     private static readonly HotkeyDecision Swallow = new(true, false, false);
 
-    private bool _swallowSUp;
-    private uint _sTime;
+    private bool _swallowSUp, _swallowRUp;
+    private uint _sTime, _rTime;
     private bool _snapshotDown;
     private bool _swallowSnapshotUp;
     private uint _snapshotTime;
@@ -25,30 +25,32 @@ internal sealed class HotkeyFilter
 
     public HotkeyDecision OnKey(uint vk, bool isDown, uint time, Mods mods)
     {
-        if (vk == VkS) return OnS(isDown, time, mods);
+        if (vk == VkS) return OnWinShift(ref _swallowSUp, ref _sTime, isDown, time, mods, record: false);
+        if (vk == VkR) return OnWinShift(ref _swallowRUp, ref _rTime, isDown, time, mods, record: true);
         if (vk == VkSnapshot) return OnSnapshot(isDown, time, mods);
         return Pass;
     }
 
-    private HotkeyDecision OnS(bool isDown, uint time, Mods mods)
+    // Win+Shift+S (screenshot) and Win+Shift+R (record): swallow the letter only, fire once per press.
+    private static HotkeyDecision OnWinShift(ref bool swallowUp, ref uint lastTime, bool isDown, uint time, Mods mods, bool record)
     {
         if (!isDown)
         {
-            if (!_swallowSUp) return Pass;
-            _swallowSUp = false;
+            if (!swallowUp) return Pass;
+            swallowUp = false;
             return Swallow;
         }
-        if (_swallowSUp && time - _sTime > StaleMs) _swallowSUp = false;
-        if (_swallowSUp)
+        if (swallowUp && time - lastTime > StaleMs) swallowUp = false;
+        if (swallowUp)
         {
-            _sTime = time;
+            lastTime = time;
             return Swallow;
         }
         if ((mods & Mods.Win) != 0 && (mods & Mods.Shift) != 0 && (mods & (Mods.Ctrl | Mods.Alt)) == 0)
         {
-            _swallowSUp = true;
-            _sTime = time;
-            return new HotkeyDecision(true, true, true);
+            swallowUp = true;
+            lastTime = time;
+            return new HotkeyDecision(true, true, true, record);
         }
         return Pass;
     }
