@@ -14,6 +14,7 @@ final class RecordSelectSession {
     var onRecord: ((NSScreen, CGRect) -> Void)?
     var onClose: (() -> Void)?
     private var closed = false
+    private let previous = NSWorkspace.shared.frontmostApplication
 
     init() {
         for screen in NSScreen.screens {
@@ -65,6 +66,8 @@ final class RecordSelectSession {
         for w in windows { w.orderOut(nil); w.contentView = nil }
         windows.removeAll()
         views.removeAll()
+        // Give focus back, so the app being recorded keeps taking keystrokes.
+        if let previous, previous.processIdentifier != ProcessInfo.processInfo.processIdentifier { previous.activate(options: []) }
         onClose?()
     }
 }
@@ -314,6 +317,8 @@ final class RecordSetupBar: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
+
+    override func mouseDown(with event: NSEvent) {}
 
     func toggleSystemSound() {
         Settings.shared.recordSystemSound.toggle()

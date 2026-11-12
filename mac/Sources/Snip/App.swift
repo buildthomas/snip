@@ -99,18 +99,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func changeHotkey() {
-        changeHotkey(hotKey, current: Settings.shared.hotkey, other: Settings.shared.recordHotkey) { Settings.shared.hotkey = $0 }
+        rebind(hotKey, current: Settings.shared.hotkey, otherKey: recordHotKey, other: Settings.shared.recordHotkey) { Settings.shared.hotkey = $0 }
     }
 
     @objc private func changeRecordHotkey() {
-        changeHotkey(recordHotKey, current: Settings.shared.recordHotkey, other: Settings.shared.hotkey) { Settings.shared.recordHotkey = $0 }
+        rebind(recordHotKey, current: Settings.shared.recordHotkey, otherKey: hotKey, other: Settings.shared.hotkey) { Settings.shared.recordHotkey = $0 }
     }
 
-    private func changeHotkey(_ key: HotKey, current old: HotkeySpec, other: HotkeySpec, save: @escaping (HotkeySpec) -> Void) {
-        // Unregistered while recording, so pressing the current hotkey can be recorded instead of triggering it.
+    private func rebind(_ key: HotKey, current old: HotkeySpec, otherKey: HotKey, other: HotkeySpec, save: @escaping (HotkeySpec) -> Void) {
+        // Both unregistered while recording, so pressing either can be recorded (or refused) instead of triggering it.
         key.unregister()
+        otherKey.unregister()
         recorder.show(current: old) { [weak self] spec in
             guard let self else { return }
+            otherKey.register(other)
             guard let spec, spec != old else {
                 key.register(old)
                 return

@@ -152,14 +152,19 @@ final class RecordingBar: ChromePanel {
         view.stop.toolTip = "Stop recording (\(hotkey))"
         view.discard.toolTip = "Discard recording"
         view.toolTip = "Recording - drag to move, \(hotkey) to stop"
-        let started = Date()
         timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            self?.view.elapsed = Date().timeIntervalSince(started)
+            guard let self, let start = self.startedAt else { return }
+            self.view.elapsed = Date().timeIntervalSince(start)
         }
     }
+
+    private var startedAt: Date?
     required init?(coder: NSCoder) { fatalError("not used") }
 
-    func markStarted() { view.started = true }
+    func markStarted() {
+        startedAt = Date()
+        view.started = true
+    }
 
     func place(near area: CGRect, on screen: NSScreen) {
         let visible = screen.visibleFrame

@@ -1,7 +1,7 @@
 import Foundation
 import CoreGraphics
 
-/// Recording limits and encoder settings, matching the Windows app's `RecordingMath`.
+/// Recording limits as in the Windows app's `RecordingMath`; the bitrate is an average here (Windows uses a quality target).
 public enum RecordingMath {
     public static let fps = 30
     public static let maxWidth = 4096, maxHeight = 4096, maxPixels = 4096 * 2304

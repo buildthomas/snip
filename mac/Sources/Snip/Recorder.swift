@@ -26,6 +26,7 @@ enum RecordingFiles {
         let fm = FileManager.default
         try fm.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "yyyy-MM-dd HH.mm.ss"
         let name = "Snip \(f.string(from: Date()))"
         var i = 1
@@ -65,6 +66,8 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptur
     let url: URL
     let systemSound: Bool
     let microphone: Bool
+    private let displayID: CGDirectDisplayID?
+    private let scale: CGFloat
 
     var onStarted: (() -> Void)?
     var onFailed: ((String) -> Void)?
@@ -84,7 +87,9 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptur
     private var startHost = CMTime.zero
     private var lastPTS = CMTime.zero
     private var lastArrival = CMTime.zero
-    private var lastPixels: CVPixelBuffer?
+    private var lastSample: CMSampleBuffer?
+    private var audioError: String?
+    private var micObserver: NSObjectProtocol?
     private var frames = 0
     private var timer: DispatchSourceTimer?
     private var ticks = 0
@@ -100,6 +105,8 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptur
         self.url = url
         self.systemSound = systemSound
         self.microphone = microphone
+        displayID = Capture.displayID(of: screen)
+        scale = screen.backingScaleFactor
     }
 
     private static var hostNow: CMTime { CMClockGetTime(CMClockGetHostTimeClock()) }
@@ -108,16 +115,22 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptur
 
     func start() {
         let t = DispatchTime.now()
-        SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: true) { [weak self] content, error in
+        // Not only on-screen windows: the border and bar may not be registered yet, and Snip must be found to be excluded.
+        SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) { [weak self] content, error in
             guard let self else { return }
             self.queue.async {
                 do {
                     guard let content else { throw error ?? RecorderError("Screen content isn't available.") }
                     try self.setUp(content)
                     Log.debug("recording setup \(Log.ms(since: t)) ms")
-                    self.stream?.startCapture { error in
-                        if let error { self.queue.async { self.fail("Couldn't start capturing: \(error.localizedDescription)") } }
-                        else { Log.debug("capture started \(Log.ms(since: t)) ms after start") }
+                    let stream = self.stream
+                    stream?.startCapture { error in
+                        self.queue.async {
+                            if let error { self.fail("Couldn't start capturing: \(error.localizedDescription)"); return }
+                            Log.debug("capture started \(Log.ms(since: t)) ms after start")
+                            // Stopped while starting: make sure capture doesn't keep running.
+                            if self.stopping || self.failed { stream?.stopCapture(completionHandler: nil) }
+                        }
                     }
                 } catch {
                     self.fail(error.localizedDescription)
@@ -128,12 +141,12 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptur
 
     private func setUp(_ content: SCShareableContent) throws {
         guard !stopping else { return }
-        guard let id = Capture.displayID(of: screen), let display = content.displays.first(where: { $0.displayID == id }) else {
+        guard let id = displayID, let display = content.displays.first(where: { $0.displayID == id }) else {
             throw RecorderError("The display is no longer available.")
         }
         let own = content.applications.filter { $0.processID == ProcessInfo.processInfo.processIdentifier }
+        if own.isEmpty { Log.error("Snip isn't in the shareable content; its windows rely on sharingType to stay out of the video") }
         let filter = SCContentFilter(display: display, excludingApplications: own, exceptingWindows: [])
-        let scale = screen.backingScaleFactor
         let size = RecordingMath.even(Int((area.width * scale).rounded()), Int((area.height * scale).rounded()))
         if let problem = RecordingMath.sizeProblem(width: size.width, height: size.height) { throw RecorderError(problem) }
 
@@ -175,6 +188,7 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptur
             AVVideoCompressionPropertiesKey: [
                 AVVideoAverageBitRateKey: RecordingMath.bitrate(width: width, height: height),
                 AVVideoMaxKeyFrameIntervalKey: RecordingMath.fps * 10,
+                AVVideoMaxKeyFrameIntervalDurationKey: 10,
                 AVVideoExpectedSourceFrameRateKey: RecordingMath.fps,
                 AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
                 AVVideoAllowFrameReorderingKey: false,
@@ -219,6 +233,10 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptur
         session.addInput(input)
         session.addOutput(output)
         output.setSampleBufferDelegate(self, queue: queue)
+        micObserver = NotificationCenter.default.addObserver(forName: .AVCaptureSessionRuntimeError, object: session, queue: nil) { [weak self] note in
+            let error = note.userInfo?[AVCaptureSessionErrorKey] as? Error
+            self?.queue.async { self?.audioError = self?.audioError ?? "Microphone: \(error?.localizedDescription ?? "stopped working")" }
+        }
         session.startRunning()
         mic = session
     }
@@ -244,7 +262,7 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptur
     private func handleFrame(_ sb: CMSampleBuffer) {
         guard let attachments = CMSampleBufferGetSampleAttachmentsArray(sb, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
               let raw = attachments.first?[.status] as? Int, SCFrameStatus(rawValue: raw) == .complete,
-              let pixels = sb.imageBuffer, let writer, let videoInput else { return }
+              sb.imageBuffer != nil, let writer, let videoInput else { return }
         let pts = sb.presentationTimeStamp
         if sessionStart == nil {
             writer.startSession(atSourceTime: pts)
@@ -262,14 +280,33 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptur
         frames += 1
         lastPTS = pts
         lastArrival = Self.hostNow
-        lastPixels = pixels
+        lastSample = sb
+    }
+
+    /// Frames only arrive when the screen changes; like Windows, a still screen gets the last frame again every second.
+    private func keepAlive() {
+        guard let last = lastSample, let videoInput, videoInput.isReadyForMoreMediaData else { return }
+        let gap = Self.hostNow - lastArrival
+        guard gap.seconds >= 1 else { return }
+        var timing = CMSampleTimingInfo(duration: .invalid, presentationTimeStamp: lastPTS + gap, decodeTimeStamp: .invalid)
+        var copy: CMSampleBuffer?
+        guard CMSampleBufferCreateCopyWithNewTiming(allocator: kCFAllocatorDefault, sampleBuffer: last, sampleTimingEntryCount: 1,
+                                                    sampleTimingArray: &timing, sampleBufferOut: &copy) == noErr, let copy else { return }
+        if videoInput.append(copy) {
+            lastPTS = timing.presentationTimeStamp
+            lastArrival = Self.hostNow
+        }
     }
 
     private func handleAudio(_ sb: CMSampleBuffer, source: Int, pts: CMTime) {
         guard let start = sessionStart, audioInput != nil else { return }
         let converter = converters[source] ?? AudioConverter()
         converters[source] = converter
-        guard let samples = converter.convert(sb), !samples.isEmpty else { return }
+        guard let samples = converter.convert(sb) else {
+            audioError = audioError ?? "Some sound couldn't be read."
+            return
+        }
+        guard !samples.isEmpty else { return }
         let count = samples.count / AudioMixer.channels
         let rate = Double(AudioMixer.rate)
         let arrival = Int64(((Self.hostNow - startHost).seconds * rate).rounded())
@@ -295,9 +332,10 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptur
         guard !stopping, !failed else { return }
         let behind = Int64(AudioMixer.rate / 5)
         writeAudio(until: Int64(((Self.hostNow - startHost).seconds * Double(AudioMixer.rate)).rounded()) - behind)
+        keepAlive()
         ticks += 1
-        if ticks % 20 == 0, let free = try? RecordingFiles.directory.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
-            .volumeAvailableCapacityForImportantUsage, free < 1 << 30 {
+        if ticks % 20 == 0, let free = try? RecordingFiles.directory.resourceValues(forKeys: [.volumeAvailableCapacityKey])
+            .volumeAvailableCapacity, free < 1 << 30 {
             autoStop("Recording stopped: less than 1 GB of disk space left.")
         }
     }
@@ -320,7 +358,10 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptur
         guard CMAudioSampleBufferCreateReadyWithPacketDescriptions(allocator: kCFAllocatorDefault, dataBuffer: block, formatDescription: audioFormat,
                                                                    sampleCount: count, presentationTimeStamp: pts, packetDescriptions: nil,
                                                                    sampleBufferOut: &sample) == noErr, let sample else { return }
-        if !audioInput.append(sample) { Log.error("audio append failed: \(writer?.error.map { "\($0)" } ?? "?")") }
+        if !audioInput.append(sample) {
+            Log.error("audio append failed: \(writer?.error.map { "\($0)" } ?? "?")")
+            audioError = audioError ?? "The sound couldn't be encoded."
+        }
     }
 
     // MARK: - Failure and stop
@@ -344,7 +385,13 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptur
     /// Before the first frame: tears everything down, deletes the file and reports.
     private func fail(_ message: String) {
         guard !failed, !stopping else { return }
-        if sessionStart != nil { autoStop("Recording stopped: \(message)"); return }
+        if sessionStart != nil {
+            // The writer is broken; stop feeding it. Stopping then reports why and removes the file.
+            failed = true
+            teardown()
+            autoStop("Recording stopped: \(message)")
+            return
+        }
         failed = true
         Log.error("recording failed to start: \(message)")
         teardown()
@@ -354,12 +401,19 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptur
         DispatchQueue.main.async { handler?(message) }
     }
 
+    private func stopMicrophone() {
+        mic?.stopRunning()
+        mic = nil
+        if let micObserver { NotificationCenter.default.removeObserver(micObserver) }
+        micObserver = nil
+    }
+
     private func teardown() {
         timer?.cancel()
         timer = nil
-        mic?.stopRunning()
-        mic = nil
+        stopMicrophone()
         stream?.stopCapture(completionHandler: nil)
+        stream = nil
     }
 
     /// Finishes the file; calls back on the main thread.
@@ -370,8 +424,7 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptur
             let stopHost = Self.hostNow
             timer?.cancel()
             timer = nil
-            mic?.stopRunning()
-            mic = nil
+            stopMicrophone()
             let finish = { self.queue.async { self.finalize(stopHost: stopHost, completion) } }
             if let stream, !failed { stream.stopCapture { _ in finish() } } else { finish() }
         }
@@ -380,10 +433,10 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptur
     private func finalize(stopHost: CMTime, _ completion: @escaping (Result<RecordingResult, Error>) -> Void) {
         func done(_ r: Result<RecordingResult, Error>) { DispatchQueue.main.async { completion(r) } }
         stream = nil
-        guard let writer, let start = sessionStart, frames > 0, !failed else {
+        guard let writer, let start = sessionStart, frames > 0, !failed, writer.status == .writing else {
             writer?.cancelWriting()
             RecordingFiles.delete(url)
-            done(.failure(RecorderError(stopReason ?? "The recording produced no video.")))
+            done(.failure(writer?.error ?? RecorderError(stopReason ?? "The recording produced no video.")))
             return
         }
         let end = lastPTS + CMTimeMaximum(CMTime(value: 1, timescale: CMTimeScale(RecordingMath.fps)), stopHost - lastArrival)
@@ -391,9 +444,9 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptur
         videoInput?.markAsFinished()
         audioInput?.markAsFinished()
         writer.endSession(atSourceTime: end)
-        let thumbnail = lastPixels.flatMap { Self.image(from: $0) }
-        lastPixels = nil
-        let reason = stopReason
+        let thumbnail = lastSample?.imageBuffer.flatMap { Self.image(from: $0) }
+        lastSample = nil
+        let reason = stopReason ?? audioError.map { "Sound: \($0)" }
         writer.finishWriting { [url] in
             guard writer.status == .completed else {
                 RecordingFiles.delete(url)
@@ -413,7 +466,7 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptur
             teardown()
             writer?.cancelWriting()
             writer = nil
-            lastPixels = nil
+            lastSample = nil
         }
         RecordingFiles.delete(url)
     }
