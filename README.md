@@ -76,8 +76,8 @@ Every redaction is flattened into the copied or saved image; there is no hidden 
 ### Record a video (Windows for now)
 
 Select an area, then press the red **Record** button in the action bar. A thin red border marks what's being
-recorded, and a small bar next to it shows the time with **Stop** and **Discard**; press the capture hotkey again to
-stop too. The pointer is included and there's no time limit.
+recorded, and a small bar next to it shows the time with **Stop** and **Discard** (drag it anywhere; it stays out of
+the video). Pressing the capture hotkey again, or clicking the tray icon, also stops. The pointer is included and there's no time limit.
 
 Sound is off unless you turn it on: the speaker button next to **Record** adds **system sound** (what you hear), the
 microphone button adds your **microphone**. Each is a separate on/off switch, remembered for next time, and the

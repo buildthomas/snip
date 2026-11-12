@@ -58,7 +58,8 @@ internal sealed class RecordingController
         var r = recorder.Rect;
         var scale = RecordingUi.ScaleAt(new Point(r.X + r.Width / 2, r.Y + r.Height / 2));
         _border = new RecordingBorder(r, Math.Max(1, (int)Math.Round(scale)));
-        _bar = new RecordingBar(recorder, scale, Stop, Discard, settings.RecordSystemSound, settings.RecordMicrophone);
+        var hotkeys = settings.PrintScreenEnabled ? "Win+Shift+S or PrtSc" : "Win+Shift+S";
+        _bar = new RecordingBar(recorder, scale, Stop, Discard, settings.RecordSystemSound, settings.RecordMicrophone, hotkeys);
         _bar.PlaceNear(r);
         recorder.AutoStopped += _ => _bar.BeginInvoke(Stop);
     }
@@ -189,7 +190,7 @@ internal sealed class RecordingBar : Form
     private readonly string _soundIcons;
     private bool _started;
 
-    public RecordingBar(ScreenRecorder recorder, float scale, Action stop, Action discard, bool systemSound, bool microphone)
+    public RecordingBar(ScreenRecorder recorder, float scale, Action stop, Action discard, bool systemSound, bool microphone, string hotkeys)
     {
         _recorder = recorder;
         _s = scale;
@@ -211,10 +212,11 @@ internal sealed class RecordingBar : Form
         _discard.Click += (_, _) => discard();
         Controls.Add(_stop);
         Controls.Add(_discard);
-        _tips.SetToolTip(_stop, "Stop recording (Win+Shift+S)");
+        _tips.SetToolTip(_stop, $"Stop recording ({hotkeys})");
         _tips.SetToolTip(_discard, "Discard recording");
-        if (_soundIcons.Length > 0)
-            _tips.SetToolTip(this, $"Recording {(systemSound && microphone ? "system sound and microphone" : systemSound ? "system sound" : "microphone")}");
+        var sound = _soundIcons.Length == 0 ? "" : $" with {(systemSound && microphone ? "system sound and microphone" : systemSound ? "system sound" : "microphone")}";
+        _tips.SetToolTip(this, $"Recording{sound} - drag to move, {hotkeys} to stop");
+        Cursor = Cursors.SizeAll;
         _tick.Tick += (_, _) => Invalidate(new Rectangle(0, 0, _stop.Left, Height));
         _tick.Start();
     }
@@ -245,15 +247,41 @@ internal sealed class RecordingBar : Form
         RecordingUi.ExcludeFromCapture(Handle);
     }
 
-    public void PlaceNear(Rectangle area)
+    public void PlaceNear(Rectangle area) => Location = Place(area, Screen.FromRectangle(area).WorkingArea, Size, S(8));
+
+    /// Below the area, else above it, else inside its bottom-right corner; always within the work area (never under
+    /// the taskbar), so the controls stay visible and clickable when recording a whole screen or a maximized window.
+    public static Point Place(Rectangle area, Rectangle work, Size size, int gap)
     {
-        var mon = Screen.FromRectangle(area).Bounds;
-        int gap = S(8);
-        int x = Math.Clamp(area.Right - Width, mon.Left, mon.Right - Width);
-        int y = area.Bottom + gap;
-        if (y + Height > mon.Bottom) y = area.Top - gap - Height;
-        if (y < mon.Top) y = area.Bottom - Height - gap;
-        Location = new Point(x, y);
+        int x = area.Right - size.Width, y = area.Bottom + gap;
+        if (y + size.Height > work.Bottom) y = area.Top - gap - size.Height;
+        if (y < work.Top)
+        {
+            y = Math.Min(area.Bottom, work.Bottom) - size.Height - gap;
+            x = Math.Min(area.Right, work.Right) - size.Width - gap;
+        }
+        return new Point(Math.Clamp(x, work.Left, Math.Max(work.Left, work.Right - size.Width)),
+            Math.Clamp(y, work.Top, Math.Max(work.Top, work.Bottom - size.Height)));
+    }
+
+    private Point? _dragFrom;
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        if (e.Button == MouseButtons.Left) _dragFrom = e.Location;
+        base.OnMouseDown(e);
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        if (_dragFrom is Point from) Location = new Point(Left + e.X - from.X, Top + e.Y - from.Y);
+        base.OnMouseMove(e);
+    }
+
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        _dragFrom = null;
+        base.OnMouseUp(e);
     }
 
     protected override void OnPaint(PaintEventArgs e)
