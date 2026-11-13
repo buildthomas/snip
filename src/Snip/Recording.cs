@@ -190,7 +190,6 @@ internal abstract class ChromeForm : Form
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.Manual;
         ShowInTaskbar = false;
-        TopMost = true;
     }
 
     protected virtual int ExtraExStyle => 0;
@@ -202,7 +201,8 @@ internal abstract class ChromeForm : Form
         get
         {
             var cp = base.CreateParams;
-            cp.ExStyle |= 0x80 /* TOOLWINDOW */ | 0x08000000 /* NOACTIVATE */ | ExtraExStyle;
+            // Topmost via the style: WinForms' TopMost calls SetWindowPos without NOACTIVATE, which takes focus.
+            cp.ExStyle |= 0x80 /* TOOLWINDOW */ | 0x08 /* TOPMOST */ | 0x08000000 /* NOACTIVATE */ | ExtraExStyle;
             return cp;
         }
     }

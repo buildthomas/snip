@@ -199,7 +199,7 @@ internal sealed unsafe class ScreenRecorder
             foreach (var s in _sources)
             {
                 Release(ref s.Dup);
-                if (!TryDuplicate(s)) throw new InvalidOperationException("Windows refused screen recording right now. Try again in a moment.");
+                if (!DuplicateSoon(s)) throw new InvalidOperationException("Windows refused screen recording right now. Try again in a moment.");
             }
             if (_systemSound || _microphone) _audio = AudioCapture.Create(_systemSound, _microphone);
         }
@@ -571,7 +571,7 @@ internal sealed unsafe class ScreenRecorder
         if (_gpu) _gpu = TrySetUpGpuEncoding();
         Log.Trace($"recording setup: device {sw.ElapsedMilliseconds} ms");
         foreach (var s in _sources)
-            if (!TryDuplicate(s)) throw new InvalidOperationException("Windows refused screen recording right now. Try again in a moment.");
+            if (!DuplicateSoon(s)) throw new InvalidOperationException("Windows refused screen recording right now. Try again in a moment.");
 
         var td = Desc(usage: 3 /* STAGING */, bind: 0, cpu: 0x20000 /* READ */, misc: 0);
         IntPtr staging;
@@ -638,6 +638,14 @@ internal sealed unsafe class ScreenRecorder
         if (_dib == IntPtr.Zero) throw new OutOfMemoryException("Not enough memory to record this area.");
         _bits = (byte*)bits;
         _oldBmp = SelectObject(_memDc, _dib);
+    }
+
+    // A recorder that was just cancelled can still hold the display's duplication for a moment.
+    private bool DuplicateSoon(Source s)
+    {
+        for (var sw = Stopwatch.StartNew(); !_cancelled; Thread.Sleep(50))
+            if (TryDuplicate(s) || sw.ElapsedMilliseconds > 2000) return s.Dup != IntPtr.Zero;
+        return false;
     }
 
     private bool TryDuplicate(Source s)
