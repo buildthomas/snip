@@ -172,6 +172,7 @@ internal sealed unsafe class ScreenRecorder
     {
         public IntPtr Output1, Dup;
         public Rectangle Desktop, Part;
+        public bool Seen;
     }
 
     private readonly List<Source> _sources = new();
@@ -233,9 +234,14 @@ internal sealed unsafe class ScreenRecorder
             _audio.Stop(_lastTimestamp * AudioMixer.Rate / 10_000_000);
             if (_audio.Error != null) _stopReason ??= $"Sound: {_audio.Error}";
         }
+        var finished = false;
         try
         {
-            if (_writer != IntPtr.Zero && _frames > 0) Check(Call(_writer, 11), "finish the video");
+            if (_writer != IntPtr.Zero && _frames > 0)
+            {
+                Check(Call(_writer, 11), "finish the video");
+                finished = true;
+            }
         }
         catch (Exception ex)
         {
@@ -245,6 +251,11 @@ internal sealed unsafe class ScreenRecorder
         Cleanup();
         CoUninitialize();
         if (_frames == 0) DeleteOutput();
+        if (finished)
+        {
+            try { Mp4FastStart.Apply(_path); }
+            catch (Exception ex) { Log.Write($"recording: couldn't move the MP4 index to the front: {ex.Message}"); }
+        }
     }
 
     private void Abandon()
@@ -265,7 +276,8 @@ internal sealed unsafe class ScreenRecorder
     {
         long intervalMs = 1000 / RecordingMath.Fps;
         long due = 0, lastWrite = long.MinValue / 2, nextDiskCheck = 0;
-        var dirty = true;
+        var dirty = false;
+        var ready = false;
         var root = Path.GetPathRoot(Path.GetFullPath(_path))!;
         _startTimestamp = Stopwatch.GetTimestamp();
         _clock.Start();
@@ -273,7 +285,7 @@ internal sealed unsafe class ScreenRecorder
         while (!_stop)
         {
             var now = _clock.ElapsedMilliseconds;
-            var timeout = (uint)Math.Clamp(due - now, 0, 100);
+            var timeout = ready ? (uint)Math.Clamp(due - now, 0, 100) : 50u;
             var anyLive = false;
             for (int i = 0; i < _sources.Count; i++)
             {
@@ -283,6 +295,15 @@ internal sealed unsafe class ScreenRecorder
                 if (Acquire(s, i == 0 ? timeout : 0)) dirty = true;
             }
             if (!anyLive) Thread.Sleep(100);
+            if (!ready)
+            {
+                // Until a display delivers its first image the texture is blank; a blank first frame is a black preview.
+                if (!_sources.All(s => s.Seen || s.Dup == IntPtr.Zero) && _clock.ElapsedMilliseconds < 1000) continue;
+                ready = true;
+                dirty = true;
+                _startTimestamp = Stopwatch.GetTimestamp();
+                _clock.Restart();
+            }
 
             now = _clock.ElapsedMilliseconds;
             if (now >= due)
@@ -309,7 +330,7 @@ internal sealed unsafe class ScreenRecorder
             }
         }
         var end = _clock.ElapsedMilliseconds;
-        if (end > lastWrite) WriteFrame(end);
+        if (ready && end > lastWrite) WriteFrame(end);
     }
 
     private static long FreeBytes(string root)
@@ -345,6 +366,7 @@ internal sealed unsafe class ScreenRecorder
                 };
                 CallVoid(_context, 46, _gpu ? _accum : _staging, 0u, (uint)(s.Part.X - _rect.X), (uint)(s.Part.Y - _rect.Y), 0u, tex, 0u, &box);
                 Release(ref tex);
+                s.Seen = true;
             }
             return info.LastPresentTime != 0 || info.LastMouseUpdateTime != 0;
         }

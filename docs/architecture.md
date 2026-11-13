@@ -95,9 +95,12 @@ Record/Enter ─► overlay closes, border + bar shown ─► Begin (first frame
   still screen costs nothing.
 - **Encode:** Media Foundation sink writer with a DXGI device manager, so the hardware H.264 encoder takes GPU textures
   directly (colour conversion also on the GPU). Quality-based rate control, High profile, a keyframe every 10 s.
-  Without a usable GPU path it falls back to copying frames to memory (higher CPU, same file).
+  Without a usable GPU path it falls back to copying frames to memory (higher CPU, same file). After finishing,
+  `Mp4FastStart` moves the index (`moov`) in front of the media data, so browsers and chat apps can play and preview
+  the file before it has fully arrived (Media Foundation always writes it last).
 - **Frames:** at most 30 per second and only when the screen or pointer changed, plus one per second to keep players
-  happy. The pointer is drawn into each frame with GDI (`GetDC` on the texture).
+  happy. The first frame waits (up to 1 s) until every display has delivered an image; the clock starts there, so the
+  video never opens on a blank frame, which previewers would show as a black thumbnail. The pointer is drawn into each frame with GDI (`GetDC` on the texture).
 - **Chrome:** the border strips and the Stop bar are excluded from capture (`WDA_EXCLUDEFROMCAPTURE`) and never take
   focus. The capture hotkey stops a running recording.
 - **Sound (optional, off by default):** WASAPI loopback of the default output for system sound and the default
