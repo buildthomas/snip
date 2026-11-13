@@ -42,10 +42,12 @@ final class RecordingController {
     private let border: ChromePanel
     private let bar: RecordingBar
     private var done = false
+    private var warmup: MicWarmup?
     var onEnded: (() -> Void)?
 
-    init(recorder: ScreenRecorder) {
+    init(recorder: ScreenRecorder, warmup: MicWarmup?) {
         self.recorder = recorder
+        self.warmup = warmup
         let frame = RecordingStyle.globalFrame(recorder.area, on: recorder.screen)
         let t: CGFloat = 2
         border = ChromePanel(frame: frame.insetBy(dx: -t, dy: -t))
@@ -55,7 +57,11 @@ final class RecordingController {
         bar.onStop = { [weak self] in self?.stop() }
         bar.onDiscard = { [weak self] in self?.discard() }
         bar.place(near: recorder.area, on: recorder.screen)
-        recorder.onStarted = { [weak self] in self?.bar.markStarted() }
+        recorder.onStarted = { [weak self] in
+            self?.bar.markStarted()
+            // The recorder's own microphone session is running by now; give it a moment before letting go.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self?.stopWarmup() }
+        }
         recorder.onFailed = { [weak self] message in self?.fail(message) }
         recorder.onAutoStopped = { [weak self] _ in self?.stop() }
     }
@@ -69,6 +75,12 @@ final class RecordingController {
     private func closeChrome() {
         border.orderOut(nil)
         bar.close()
+        stopWarmup()
+    }
+
+    private func stopWarmup() {
+        warmup?.stop()
+        warmup = nil
     }
 
     private func fail(_ message: String) {

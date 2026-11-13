@@ -201,7 +201,7 @@ internal sealed unsafe class ScreenRecorder
                 Release(ref s.Dup);
                 if (!DuplicateSoon(s)) throw new InvalidOperationException("Windows refused screen recording right now. Try again in a moment.");
             }
-            if (_systemSound || _microphone) _audio = AudioCapture.Create(_systemSound, _microphone);
+            if (_audio == null && (_systemSound || _microphone)) _audio = AudioCapture.Create(_systemSound, _microphone);
         }
         catch (Exception ex)
         {
@@ -602,6 +602,13 @@ internal sealed unsafe class ScreenRecorder
             InitEncoder();
         }
         Log.Trace($"recording setup: encoder {sw.ElapsedMilliseconds} ms");
+        // A microphone takes ~0.5-1 s to deliver its first sound; start it now, keep nothing until recording begins.
+        if (_microphone)
+        {
+            _audio = AudioCapture.Create(_systemSound, _microphone);
+            _audio.Warm();
+            Log.Trace($"recording setup: sound devices {sw.ElapsedMilliseconds} ms");
+        }
         Log.Write($"recording prepared: {_rect.Width}x{_rect.Height} at {_rect.X},{_rect.Y}, {_sources.Count} display(s), " +
             $"{(_gpu ? "GPU" : "CPU")} path, system sound {(_systemSound ? "on" : "off")}, microphone {(_microphone ? "on" : "off")}");
     }

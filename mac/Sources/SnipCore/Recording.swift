@@ -75,15 +75,17 @@ public final class AudioMixer {
     }
 }
 
-/// Packets follow on from the previous one; the stamp wins on a flagged or unflagged pause. Same rules as Windows.
+/// Packets follow on from the previous one; the stamp wins on a flagged pause, or an unflagged one from a source that
+/// pauses while silent. A microphone streams on, even when it starts late. Same rules as Windows.
 public enum AudioTimeline {
     public static let maxLagFrames = Int64(AudioMixer.rate * 150 / 1000)
     public static let driftFrames = Int64(AudioMixer.rate / 5)
 
-    public static func place(next: Int64, stamped: Int64, frames: Int, discontinuity: Bool, arrival: Int64) -> (at: Int64, skip: Int) {
+    public static func place(next: Int64, stamped: Int64, frames: Int, discontinuity: Bool, arrival: Int64,
+                             canPause: Bool = true) -> (at: Int64, skip: Int) {
         let n = Int64(frames)
         if next < 0 || discontinuity && stamped > next { return (stamped, 0) }
-        if next + n < arrival - maxLagFrames { return (max(stamped, arrival - n), 0) }
+        if canPause && next + n < arrival - maxLagFrames { return (max(stamped, arrival - n), 0) }
         if stamped < next - driftFrames { return (next, Int(min(n, next - stamped))) }
         return (next, 0)
     }

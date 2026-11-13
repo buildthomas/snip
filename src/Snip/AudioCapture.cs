@@ -48,16 +48,17 @@ internal sealed class AudioMixer
     }
 }
 
-/// Packets follow on from the previous one (stamps race ahead after silence); the stamp wins on a flagged or unflagged pause.
+/// Packets follow on from the previous one (stamps race ahead after silence); the stamp wins on a flagged pause, or an
+/// unflagged one from a source that pauses while silent (loopback). A microphone streams on, even when it starts late.
 internal static class AudioTimeline
 {
     public const long MaxLagFrames = AudioMixer.Rate * 150 / 1000;
     public const long DriftFrames = AudioMixer.Rate / 5;
 
-    public static (long At, int Skip) Place(long nextFrame, long stampedFrame, int frames, bool discontinuity, long arrivalFrame)
+    public static (long At, int Skip) Place(long nextFrame, long stampedFrame, int frames, bool discontinuity, long arrivalFrame, bool canPause = true)
     {
         if (nextFrame < 0 || discontinuity && stampedFrame > nextFrame) return (stampedFrame, 0);
-        if (nextFrame + frames < arrivalFrame - MaxLagFrames) return (Math.Max(stampedFrame, arrivalFrame - frames), 0);
+        if (canPause && nextFrame + frames < arrivalFrame - MaxLagFrames) return (Math.Max(stampedFrame, arrivalFrame - frames), 0);
         if (stampedFrame < nextFrame - DriftFrames) return (nextFrame, (int)Math.Min(frames, nextFrame - stampedFrame));
         return (nextFrame, 0);
     }
@@ -71,6 +72,7 @@ internal sealed unsafe class AudioCapture
     private sealed class Source
     {
         public required string Name;
+        public bool CanPause;
         public IntPtr Client, Capture;
         public long NextFrame = -1;
         public bool Dead;
@@ -81,7 +83,7 @@ internal sealed unsafe class AudioCapture
     private readonly AudioMixer _mixer = new();
     private Action<short[], long>? _sink;
     private Thread? _thread;
-    private volatile bool _stop;
+    private volatile bool _stop, _live;
     private long _startTimestamp;
 
     public string? Error { get; private set; }
@@ -105,7 +107,7 @@ internal sealed unsafe class AudioCapture
     private void Open(string name, int flow, bool loopback)
     {
         IntPtr enumerator = IntPtr.Zero, device = IntPtr.Zero;
-        var s = new Source { Name = name };
+        var s = new Source { Name = name, CanPause = loopback };
         try
         {
             var clsid = CLSID_MMDeviceEnumerator;
@@ -148,14 +150,21 @@ internal sealed unsafe class AudioCapture
         }
     }
 
-    /// Starts capturing; the sink receives 16-bit stereo PCM and the frame index of its first sample.
+    /// Runs the devices but throws everything away, so a microphone is already delivering when recording starts.
+    public void Warm()
+    {
+        foreach (var s in _sources) Check(Call(s.Client, 10), s.Name);
+        _thread = new Thread(Run) { IsBackground = true, Name = "Snip audio" };
+        _thread.Start();
+    }
+
+    /// Starts keeping sound; the sink receives 16-bit stereo PCM and the frame index of its first sample.
     public void Start(long startTimestamp, Action<short[], long> sink)
     {
         _startTimestamp = startTimestamp;
         _sink = sink;
-        foreach (var s in _sources) Check(Call(s.Client, 10), s.Name);
-        _thread = new Thread(Run) { IsBackground = true, Name = "Snip audio" };
-        _thread.Start();
+        _live = true;
+        if (_thread == null) Warm();
     }
 
     /// Stops and hands over everything up to the given frame (the end of the video).
@@ -181,8 +190,12 @@ internal sealed unsafe class AudioCapture
 
     public void Release()
     {
+        _stop = true;
+        _thread?.Join();
+        _thread = null;
         foreach (var s in _sources)
         {
+            if (s.Client != IntPtr.Zero) Call(s.Client, 11);
             Rel(ref s.Capture);
             Rel(ref s.Client);
         }
@@ -198,6 +211,7 @@ internal sealed unsafe class AudioCapture
             {
                 Thread.Sleep(10);
                 Drain();
+                if (!_live) continue;
                 var until = NowFrame() - LatencyFrames;
                 if (until > _mixer.Written)
                 {
@@ -241,9 +255,14 @@ internal sealed unsafe class AudioCapture
                 ulong devicePos, qpc;
                 Check(((delegate* unmanaged[Stdcall]<IntPtr, float**, uint*, uint*, ulong*, ulong*, int>)Slot(s.Capture, 3))(
                     s.Capture, &data, &frames, &flags, &devicePos, &qpc), s.Name);
+                if (!_live)
+                {
+                    Call(s.Capture, 4, frames);
+                    continue;
+                }
                 var raw = (flags & 0x4 /* TIMESTAMP_ERROR */) != 0 && s.NextFrame >= 0
                     ? s.NextFrame : FrameAt(qpc, _startTimestamp, Stopwatch.Frequency);
-                var (first, skip) = AudioTimeline.Place(s.NextFrame, raw, (int)frames, (flags & 0x1 /* DATA_DISCONTINUITY */) != 0, NowFrame());
+                var (first, skip) = AudioTimeline.Place(s.NextFrame, raw, (int)frames, (flags & 0x1 /* DATA_DISCONTINUITY */) != 0, NowFrame(), s.CanPause);
                 if (first != s.NextFrame || skip > 0)
                     Log.Trace($"audio {s.Name}: packet of {frames} at frame {first}, " +
                         $"{(s.NextFrame < 0 ? "first" : $"stamped {raw - s.NextFrame} from the previous end, {skip} dropped")}");

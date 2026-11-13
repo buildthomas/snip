@@ -88,7 +88,9 @@ time you record with it on).
 
 Sound is off unless you turn it on, with the buttons next to **Record**: the speaker (**S**) adds **system sound**
 (what you hear), the microphone (**M**) adds your **microphone**. Each is a separate on/off switch, remembered for next
-time, and the recording bar shows which ones are on. Sound adds about 0.7 MB per minute (AAC, 96 kbps).
+time, and the recording bar shows which ones are on. Sound adds about 0.7 MB per minute (AAC, 96 kbps). With the
+microphone on, Snip starts it while you select (your system's microphone indicator lights up then), so it's already
+running when you press Record; nothing from before that is kept.
 
 When you stop, a window shows the last frame, the length and the file size: **Copy** puts the MP4 on the clipboard as
 a file (paste it into a chat or an email), **Save as...** writes it where you like, **Play** opens it in your video

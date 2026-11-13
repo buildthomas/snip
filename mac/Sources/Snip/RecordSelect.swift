@@ -12,6 +12,7 @@ final class RecordSelectSession {
     private var windows: [SelectWindow] = []
     private var views: [RecordSelectView] = []
     var onRecord: ((NSScreen, CGRect) -> Void)?
+    var onMicrophoneChanged: (() -> Void)?
     var onClose: (() -> Void)?
     private var closed = false
     private let previous = NSWorkspace.shared.frontmostApplication
@@ -94,6 +95,7 @@ final class RecordSelectView: NSView {
         bar.isHidden = true
         bar.onRecord = { [weak self] in self?.record() }
         bar.onCancel = { [weak self] in self?.session?.close(reason: "cancel") }
+        bar.onMicrophoneChanged = { [weak self] in self?.session?.onMicrophoneChanged?() }
         addSubview(bar)
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .activeAlways, .inVisibleRect], owner: self))
     }
@@ -289,6 +291,7 @@ final class RecordSelectView: NSView {
 final class RecordSetupBar: NSView {
     var onRecord: (() -> Void)?
     var onCancel: (() -> Void)?
+    var onMicrophoneChanged: (() -> Void)?
     private let sound = BarButton(symbol: "speaker.wave.2", size: 30)
     private let mic = BarButton(symbol: "mic", size: 30)
     private let recordButton = RecordButton()
@@ -328,6 +331,7 @@ final class RecordSetupBar: NSView {
     func toggleMicrophone() {
         Settings.shared.recordMicrophone.toggle()
         sync()
+        onMicrophoneChanged?()
     }
 
     private func sync() {

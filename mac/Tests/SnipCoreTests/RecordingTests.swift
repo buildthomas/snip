@@ -100,6 +100,11 @@ final class AudioTimelineTests: XCTestCase {
         XCTAssertTrue(AudioTimeline.place(next: 130_000, stamped: 200_000, frames: 480, discontinuity: false, arrival: 195_000) == (200_000, 0))
     }
 
+    func testMicrophoneThatStartsLateStreamsOnInsteadOfLeavingGaps() {
+        XCTAssertTrue(AudioTimeline.place(next: 29_793, stamped: 29_892, frames: 480, discontinuity: false, arrival: 40_000, canPause: false) == (29_793, 0))
+        XCTAssertEqual(AudioTimeline.place(next: 29_793, stamped: 29_892, frames: 480, discontinuity: false, arrival: 40_000).at, 40_000 - 480)
+    }
+
     func testFarBehindDropsTheOverlap() {
         let r = AudioTimeline.place(next: 100_000, stamped: 100_000 - AudioTimeline.driftFrames - 100, frames: 480, discontinuity: false, arrival: 0)
         XCTAssertEqual(r.at, 100_000)

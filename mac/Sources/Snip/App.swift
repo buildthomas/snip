@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var recordHotKey = HotKey(id: 2) { [weak self] in self?.record(trigger: "hotkey") }
     private var session: OverlaySession?
     private var recordSelect: RecordSelectSession?
+    private var micWarmup: MicWarmup?
     private var recording: RecordingController?
     private var capturing = false
     private var hotkeyInfoItem: NSMenuItem!
@@ -250,10 +251,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         let s = RecordSelectSession()
-        s.onClose = { [weak self] in self?.recordSelect = nil }
+        s.onClose = { [weak self] in
+            self?.recordSelect = nil
+            // After onRecord has had its chance to hand the warm microphone to the recording.
+            DispatchQueue.main.async { if self?.recording == nil { self?.updateMicWarmup(on: false) } }
+        }
         s.onRecord = { [weak self] screen, area in self?.startRecording(screen: screen, area: area) }
+        s.onMicrophoneChanged = { [weak self] in self?.updateMicWarmup(on: Settings.shared.recordMicrophone) }
         recordSelect = s
         s.show()
+        updateMicWarmup(on: Settings.shared.recordMicrophone)
+    }
+
+    private func updateMicWarmup(on: Bool) {
+        if on, micWarmup == nil { micWarmup = MicWarmup.start() }
+        if !on { micWarmup?.stop(); micWarmup = nil }
     }
 
     private func startRecording(screen: NSScreen, area: CGRect) {
@@ -284,7 +296,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let recorder = ScreenRecorder(screen: screen, area: area, url: url, systemSound: Settings.shared.recordSystemSound,
                                       microphone: Settings.shared.recordMicrophone)
-        let controller = RecordingController(recorder: recorder)
+        let controller = RecordingController(recorder: recorder, warmup: micWarmup)
+        micWarmup = nil
         controller.onEnded = { [weak self] in self?.recording = nil }
         recording = controller
         controller.start()

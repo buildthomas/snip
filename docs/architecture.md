@@ -84,8 +84,9 @@ Record/Enter ─► overlay closes, border + bar shown ─► Begin (first frame
 - **Snappy start:** setup (GPU device ~150-250 ms, hardware encoder ~200-300 ms) starts as soon as a selection settles
   (or a sound toggle changes; debounced by 150 ms) and is thrown away if recording doesn't start. With it prepared,
   capture runs ~60 ms after the click; without, ~350 ms. The border and bar appear immediately either way; the bar's
-  dot turns red once frames are being captured. Sound devices are only opened on Begin, so the microphone indicator
-  never lights up for a preparation.
+  dot turns red once frames are being captured. With the microphone on, the preparation also opens and runs it
+  (keeping nothing until Begin): a microphone needs ~0.6-0.75 s to deliver its first sound, which otherwise left the
+  start of the recording silent. System sound alone is opened on Begin.
 - **Temp files:** each recording reserves a unique name in `%TEMP%\Snip` up front. Files are deleted on Discard, after
   Save as, on a failed start and when Snip exits with a recording or unresolved result open; anything left (a copied
   file, a delete that failed because a player held it) goes at the next start or on uninstall.

@@ -124,3 +124,14 @@ public class AudioMixerTests
         Assert.All(pcm.Skip(20), s => Assert.Equal(0, (int)s));
     }
 }
+
+public class AudioTimelineMicrophoneTests
+{
+    [Fact]
+    public void AMicrophoneThatStartsLateStreamsOnInsteadOfLeavingGaps()
+    {
+        // Logged on a real device: right after start the microphone delivers its first packets ~0.1-0.2 s late.
+        Assert.Equal((29_793L, 0), AudioTimeline.Place(29_793, 29_892, 480, discontinuity: false, arrivalFrame: 40_000, canPause: false));
+        Assert.Equal(40_000 - 480, AudioTimeline.Place(29_793, 29_892, 480, discontinuity: false, arrivalFrame: 40_000, canPause: true).At);
+    }
+}

@@ -313,7 +313,8 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptur
         var stamped = Int64(((pts - start).seconds * rate).rounded())
         // Should be the same clock; if a source ever stamps on another one, its arrival time is the best guess.
         if abs(stamped - arrival) > Int64(rate) { stamped = arrival - Int64(count) }
-        let (at, skip) = AudioTimeline.place(next: nextFrame[source] ?? -1, stamped: stamped, frames: count, discontinuity: false, arrival: arrival)
+        let (at, skip) = AudioTimeline.place(next: nextFrame[source] ?? -1, stamped: stamped, frames: count, discontinuity: false,
+                                             arrival: arrival, canPause: source == Self.systemSource)
         nextFrame[source] = at + Int64(count)
         samples.withUnsafeBufferPointer { p in
             mixer.add(UnsafeBufferPointer(rebasing: p[(skip * AudioMixer.channels)...]), firstFrame: at + Int64(skip))
@@ -474,6 +475,37 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptur
     private static func image(from pixels: CVPixelBuffer) -> CGImage? {
         let image = CIImage(cvPixelBuffer: pixels)
         return CIContext(options: [.useSoftwareRenderer: false]).createCGImage(image, from: image.extent)
+    }
+}
+
+/// Runs the microphone while the user selects, keeping nothing, so it already delivers when a recording starts
+/// (a microphone takes ~0.5-1 s to produce its first sound).
+final class MicWarmup: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
+    private let session = AVCaptureSession()
+    private let queue = DispatchQueue(label: "snip.mic-warmup")
+
+    static func start() -> MicWarmup? {
+        guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized, let device = AVCaptureDevice.default(for: .audio),
+              let input = try? AVCaptureDeviceInput(device: device) else { return nil }
+        let w = MicWarmup()
+        return w.run(input) ? w : nil
+    }
+
+    private func run(_ input: AVCaptureDeviceInput) -> Bool {
+        let output = AVCaptureAudioDataOutput()
+        guard session.canAddInput(input), session.canAddOutput(output) else { return false }
+        session.addInput(input)
+        session.addOutput(output)
+        output.setSampleBufferDelegate(self, queue: queue)
+        queue.async { [session] in session.startRunning() }
+        Log.debug("microphone warming up")
+        return true
+    }
+
+    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {}
+
+    func stop() {
+        queue.async { [session] in session.stopRunning() }
     }
 }
 
