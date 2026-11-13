@@ -23,12 +23,14 @@ public class RecordingMathTests
     }
 
     [Fact]
-    public void ShouldWrite_OnlyWhenDueAndChangedOrKeepAlive()
+    public void Frames_SitOnAnExact30FpsGrid()
     {
-        Assert.False(RecordingMath.ShouldWrite(10, 33, dirty: true, lastWriteMs: 0));
-        Assert.True(RecordingMath.ShouldWrite(33, 33, dirty: true, lastWriteMs: 0));
-        Assert.False(RecordingMath.ShouldWrite(500, 33, dirty: false, lastWriteMs: 0));
-        Assert.True(RecordingMath.ShouldWrite(1000, 33, dirty: false, lastWriteMs: 0));
+        Assert.Equal(0, RecordingMath.FrameTime100ns(0));
+        Assert.Equal(333_333, RecordingMath.FrameTime100ns(1));
+        Assert.Equal(10_000_000, RecordingMath.FrameTime100ns(30));
+        Assert.Equal(600_000_000, RecordingMath.FrameTime100ns(1800));
+        Assert.Equal(33, RecordingMath.FrameDueMs(1));
+        Assert.Equal(1000, RecordingMath.FrameDueMs(30));
     }
 }
 

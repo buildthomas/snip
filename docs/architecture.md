@@ -98,8 +98,9 @@ Record/Enter ─► overlay closes, border + bar shown ─► Begin (first frame
   Without a usable GPU path it falls back to copying frames to memory (higher CPU, same file). After finishing,
   `Mp4FastStart` moves the index (`moov`) in front of the media data, so browsers and chat apps can play and preview
   the file before it has fully arrived (Media Foundation always writes it last).
-- **Frames:** at most 30 per second and only when the screen or pointer changed, plus one per second to keep players
-  happy. The first frame waits (up to 1 s) until every display has delivered an image; the clock starts there, so the
+- **Frames:** exactly 30 per second on a fixed grid (frame *k* at *k*/30 s); a slot where nothing changed repeats the
+  last image, which costs ~18 bytes. Media Foundation's MP4 sink times frames by count, not by their timestamps, so
+  skipped slots used to pull the video ahead of the sound (`AvSyncCheck` measures this, opt-in with `SNIP_AV_SYNC=1`). The first frame waits (up to 1 s) until every display has delivered an image; the clock starts there, so the
   video never opens on a blank frame, which previewers would show as a black thumbnail. The pointer is drawn into each frame with GDI (`GetDC` on the texture).
 - **Chrome:** the border strips and the Stop bar are excluded from capture (`WDA_EXCLUDEFROMCAPTURE`) and never take
   focus. The capture hotkey stops a running recording.

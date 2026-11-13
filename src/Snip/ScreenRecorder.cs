@@ -10,7 +10,6 @@ internal static class RecordingMath
     public const int Fps = 30;
     public const int MaxWidth = 4096, MaxHeight = 4096, MaxPixels = 4096 * 2304;
     public const int MinSide = 16;
-    public const long KeepAliveMs = 1000;
 
     // H.264 needs even dimensions; drop the odd row or column.
     public static Rectangle Even(Rectangle r) => new(r.X, r.Y, r.Width & ~1, r.Height & ~1);
@@ -26,8 +25,9 @@ internal static class RecordingMath
     // Upper bound for the encoder; screen content usually lands well below it.
     public static uint Bitrate(int width, int height) => (uint)Math.Clamp((long)width * height * Fps / 16, 500_000, 20_000_000);
 
-    public static bool ShouldWrite(long nowMs, long dueMs, bool dirty, long lastWriteMs) =>
-        nowMs >= dueMs && (dirty || nowMs - lastWriteMs >= KeepAliveMs);
+    // Media Foundation's MP4 sink times frames by count, not by their stamps, so every 1/30 s slot gets exactly one frame.
+    public static long FrameDueMs(long frame) => frame * 1000 / Fps;
+    public static long FrameTime100ns(long frame) => frame * 10_000_000 / Fps;
 }
 
 /// Records a screen rectangle to H.264 MP4: Desktop Duplication into a GPU texture, Media Foundation's (hardware) encoder.
@@ -61,6 +61,7 @@ internal sealed unsafe class ScreenRecorder
     private uint _audioStream;
     private long _startTimestamp;
     internal Action<short[], long>? AudioTap;
+    internal long StartTimestamp => _startTimestamp;
 
     private ScreenRecorder(Rectangle rect, string path, bool systemSound, bool microphone)
     {
@@ -274,9 +275,7 @@ internal sealed unsafe class ScreenRecorder
 
     private void Loop()
     {
-        long intervalMs = 1000 / RecordingMath.Fps;
-        long due = 0, lastWrite = long.MinValue / 2, nextDiskCheck = 0;
-        var dirty = false;
+        long frame = 0, nextDiskCheck = 0;
         var ready = false;
         var root = Path.GetPathRoot(Path.GetFullPath(_path))!;
         _startTimestamp = Stopwatch.GetTimestamp();
@@ -285,14 +284,14 @@ internal sealed unsafe class ScreenRecorder
         while (!_stop)
         {
             var now = _clock.ElapsedMilliseconds;
-            var timeout = ready ? (uint)Math.Clamp(due - now, 0, 100) : 50u;
+            var timeout = ready ? (uint)Math.Clamp(RecordingMath.FrameDueMs(frame) - now, 0, 100) : 50u;
             var anyLive = false;
             for (int i = 0; i < _sources.Count; i++)
             {
                 var s = _sources[i];
                 if (s.Dup == IntPtr.Zero && !TryDuplicate(s)) continue;
                 anyLive = true;
-                if (Acquire(s, i == 0 ? timeout : 0)) dirty = true;
+                Acquire(s, i == 0 ? timeout : 0);
             }
             if (!anyLive) Thread.Sleep(100);
             if (!ready)
@@ -300,22 +299,16 @@ internal sealed unsafe class ScreenRecorder
                 // Until a display delivers its first image the texture is blank; a blank first frame is a black preview.
                 if (!_sources.All(s => s.Seen || s.Dup == IntPtr.Zero) && _clock.ElapsedMilliseconds < 1000) continue;
                 ready = true;
-                dirty = true;
                 _startTimestamp = Stopwatch.GetTimestamp();
                 _clock.Restart();
             }
 
             now = _clock.ElapsedMilliseconds;
-            if (now >= due)
+            // After a stall the missed slots repeat the current image, so the video never runs ahead of the sound.
+            while (now >= RecordingMath.FrameDueMs(frame))
             {
-                if (RecordingMath.ShouldWrite(now, due, dirty, lastWrite))
-                {
-                    WriteFrame(now);
-                    if (_frames == 1) _audio?.Start(_startTimestamp, WriteAudio);
-                    dirty = false;
-                    lastWrite = now;
-                }
-                due = now + intervalMs;
+                WriteFrame(frame++);
+                if (_frames == 1) _audio?.Start(_startTimestamp, WriteAudio);
             }
             if (now >= nextDiskCheck)
             {
@@ -329,8 +322,7 @@ internal sealed unsafe class ScreenRecorder
                 }
             }
         }
-        var end = _clock.ElapsedMilliseconds;
-        if (ready && end > lastWrite) WriteFrame(end);
+        if (ready) WriteFrame(frame);
     }
 
     private static long FreeBytes(string root)
@@ -377,22 +369,22 @@ internal sealed unsafe class ScreenRecorder
         }
     }
 
-    private void WriteFrame(long nowMs)
+    private void WriteFrame(long frame)
     {
-        if (!_gpu) { WriteFrameCpu(nowMs); return; }
+        if (!_gpu) { WriteFrameCpu(frame); return; }
         try
         {
-            WriteFrameGpu(nowMs);
+            WriteFrameGpu(frame);
         }
         catch (Exception ex) when (_frames == 0)
         {
             Log.Write($"recording: GPU path failed on the first frame, using the CPU path: {ex.Message}");
             SwitchToCpu();
-            WriteFrameCpu(nowMs);
+            WriteFrameCpu(frame);
         }
     }
 
-    private void WriteFrameGpu(long nowMs)
+    private void WriteFrameGpu(long frame)
     {
         IntPtr tex = IntPtr.Zero, surface = IntPtr.Zero, buffer = IntPtr.Zero, buffer2d = IntPtr.Zero, sample = IntPtr.Zero;
         try
@@ -419,7 +411,7 @@ internal sealed unsafe class ScreenRecorder
             Check(Call(buffer, 6, len), "encode");
             Check(MFCreateSample(out sample), "encode");
             Check(Call(sample, 42, buffer), "encode");
-            Submit(sample, nowMs);
+            Submit(sample, frame);
         }
         finally
         {
@@ -440,9 +432,9 @@ internal sealed unsafe class ScreenRecorder
         InitEncoder();
     }
 
-    private void Submit(IntPtr sample, long nowMs)
+    private void Submit(IntPtr sample, long frame)
     {
-        var t = nowMs * 10_000;
+        var t = RecordingMath.FrameTime100ns(frame);
         Check(Call(sample, 36, t), "encode");
         Check(Call(sample, 38, 10_000_000L / RecordingMath.Fps), "encode");
         lock (_writerGate) Check(Call(_writer, 6, _stream, sample), "encode");
@@ -477,7 +469,7 @@ internal sealed unsafe class ScreenRecorder
         }
     }
 
-    private void WriteFrameCpu(long nowMs)
+    private void WriteFrameCpu(long frame)
     {
         EnsureDib();
         int w = _rect.Width, h = _rect.Height, stride = w * 4, len = stride * h;
@@ -499,7 +491,7 @@ internal sealed unsafe class ScreenRecorder
             Check(Call(buffer, 6, (uint)len), "encode");
             Check(MFCreateSample(out sample), "encode");
             Check(Call(sample, 42, buffer), "encode");
-            Submit(sample, nowMs);
+            Submit(sample, frame);
         }
         finally
         {
