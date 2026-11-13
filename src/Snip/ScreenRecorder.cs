@@ -10,7 +10,6 @@ internal static class RecordingMath
     public const int Fps = 30;
     public const int MaxWidth = 4096, MaxHeight = 4096, MaxPixels = 4096 * 2304;
     public const int MinSide = 16;
-    public const long KeepAliveMs = 1000;
 
     // H.264 needs even dimensions; drop the odd row or column.
     public static Rectangle Even(Rectangle r) => new(r.X, r.Y, r.Width & ~1, r.Height & ~1);
@@ -26,8 +25,9 @@ internal static class RecordingMath
     // Upper bound for the encoder; screen content usually lands well below it.
     public static uint Bitrate(int width, int height) => (uint)Math.Clamp((long)width * height * Fps / 16, 500_000, 20_000_000);
 
-    public static bool ShouldWrite(long nowMs, long dueMs, bool dirty, long lastWriteMs) =>
-        nowMs >= dueMs && (dirty || nowMs - lastWriteMs >= KeepAliveMs);
+    // Media Foundation's MP4 sink times frames by count, not by their stamps, so every 1/30 s slot gets exactly one frame.
+    public static long FrameDueMs(long frame) => frame * 1000 / Fps;
+    public static long FrameTime100ns(long frame) => frame * 10_000_000 / Fps;
 }
 
 /// Records a screen rectangle to H.264 MP4: Desktop Duplication into a GPU texture, Media Foundation's (hardware) encoder.
@@ -61,6 +61,7 @@ internal sealed unsafe class ScreenRecorder
     private uint _audioStream;
     private long _startTimestamp;
     internal Action<short[], long>? AudioTap;
+    internal long StartTimestamp => _startTimestamp;
 
     private ScreenRecorder(Rectangle rect, string path, bool systemSound, bool microphone)
     {
@@ -172,6 +173,7 @@ internal sealed unsafe class ScreenRecorder
     {
         public IntPtr Output1, Dup;
         public Rectangle Desktop, Part;
+        public bool Seen;
     }
 
     private readonly List<Source> _sources = new();
@@ -233,9 +235,14 @@ internal sealed unsafe class ScreenRecorder
             _audio.Stop(_lastTimestamp * AudioMixer.Rate / 10_000_000);
             if (_audio.Error != null) _stopReason ??= $"Sound: {_audio.Error}";
         }
+        var finished = false;
         try
         {
-            if (_writer != IntPtr.Zero && _frames > 0) Check(Call(_writer, 11), "finish the video");
+            if (_writer != IntPtr.Zero && _frames > 0)
+            {
+                Check(Call(_writer, 11), "finish the video");
+                finished = true;
+            }
         }
         catch (Exception ex)
         {
@@ -245,6 +252,11 @@ internal sealed unsafe class ScreenRecorder
         Cleanup();
         CoUninitialize();
         if (_frames == 0) DeleteOutput();
+        if (finished)
+        {
+            try { Mp4FastStart.Apply(_path); }
+            catch (Exception ex) { Log.Write($"recording: couldn't move the MP4 index to the front: {ex.Message}"); }
+        }
     }
 
     private void Abandon()
@@ -263,9 +275,8 @@ internal sealed unsafe class ScreenRecorder
 
     private void Loop()
     {
-        long intervalMs = 1000 / RecordingMath.Fps;
-        long due = 0, lastWrite = long.MinValue / 2, nextDiskCheck = 0;
-        var dirty = true;
+        long frame = 0, nextDiskCheck = 0;
+        var ready = false;
         var root = Path.GetPathRoot(Path.GetFullPath(_path))!;
         _startTimestamp = Stopwatch.GetTimestamp();
         _clock.Start();
@@ -273,28 +284,31 @@ internal sealed unsafe class ScreenRecorder
         while (!_stop)
         {
             var now = _clock.ElapsedMilliseconds;
-            var timeout = (uint)Math.Clamp(due - now, 0, 100);
+            var timeout = ready ? (uint)Math.Clamp(RecordingMath.FrameDueMs(frame) - now, 0, 100) : 50u;
             var anyLive = false;
             for (int i = 0; i < _sources.Count; i++)
             {
                 var s = _sources[i];
                 if (s.Dup == IntPtr.Zero && !TryDuplicate(s)) continue;
                 anyLive = true;
-                if (Acquire(s, i == 0 ? timeout : 0)) dirty = true;
+                Acquire(s, i == 0 ? timeout : 0);
             }
             if (!anyLive) Thread.Sleep(100);
+            if (!ready)
+            {
+                // Until a display delivers its first image the texture is blank; a blank first frame is a black preview.
+                if (!_sources.All(s => s.Seen || s.Dup == IntPtr.Zero) && _clock.ElapsedMilliseconds < 1000) continue;
+                ready = true;
+                _startTimestamp = Stopwatch.GetTimestamp();
+                _clock.Restart();
+            }
 
             now = _clock.ElapsedMilliseconds;
-            if (now >= due)
+            // After a stall the missed slots repeat the current image, so the video never runs ahead of the sound.
+            while (now >= RecordingMath.FrameDueMs(frame))
             {
-                if (RecordingMath.ShouldWrite(now, due, dirty, lastWrite))
-                {
-                    WriteFrame(now);
-                    if (_frames == 1) _audio?.Start(_startTimestamp, WriteAudio);
-                    dirty = false;
-                    lastWrite = now;
-                }
-                due = now + intervalMs;
+                WriteFrame(frame++);
+                if (_frames == 1) _audio?.Start(_startTimestamp, WriteAudio);
             }
             if (now >= nextDiskCheck)
             {
@@ -308,8 +322,7 @@ internal sealed unsafe class ScreenRecorder
                 }
             }
         }
-        var end = _clock.ElapsedMilliseconds;
-        if (end > lastWrite) WriteFrame(end);
+        if (ready) WriteFrame(frame);
     }
 
     private static long FreeBytes(string root)
@@ -345,6 +358,7 @@ internal sealed unsafe class ScreenRecorder
                 };
                 CallVoid(_context, 46, _gpu ? _accum : _staging, 0u, (uint)(s.Part.X - _rect.X), (uint)(s.Part.Y - _rect.Y), 0u, tex, 0u, &box);
                 Release(ref tex);
+                s.Seen = true;
             }
             return info.LastPresentTime != 0 || info.LastMouseUpdateTime != 0;
         }
@@ -355,22 +369,22 @@ internal sealed unsafe class ScreenRecorder
         }
     }
 
-    private void WriteFrame(long nowMs)
+    private void WriteFrame(long frame)
     {
-        if (!_gpu) { WriteFrameCpu(nowMs); return; }
+        if (!_gpu) { WriteFrameCpu(frame); return; }
         try
         {
-            WriteFrameGpu(nowMs);
+            WriteFrameGpu(frame);
         }
         catch (Exception ex) when (_frames == 0)
         {
             Log.Write($"recording: GPU path failed on the first frame, using the CPU path: {ex.Message}");
             SwitchToCpu();
-            WriteFrameCpu(nowMs);
+            WriteFrameCpu(frame);
         }
     }
 
-    private void WriteFrameGpu(long nowMs)
+    private void WriteFrameGpu(long frame)
     {
         IntPtr tex = IntPtr.Zero, surface = IntPtr.Zero, buffer = IntPtr.Zero, buffer2d = IntPtr.Zero, sample = IntPtr.Zero;
         try
@@ -397,7 +411,7 @@ internal sealed unsafe class ScreenRecorder
             Check(Call(buffer, 6, len), "encode");
             Check(MFCreateSample(out sample), "encode");
             Check(Call(sample, 42, buffer), "encode");
-            Submit(sample, nowMs);
+            Submit(sample, frame);
         }
         finally
         {
@@ -418,9 +432,9 @@ internal sealed unsafe class ScreenRecorder
         InitEncoder();
     }
 
-    private void Submit(IntPtr sample, long nowMs)
+    private void Submit(IntPtr sample, long frame)
     {
-        var t = nowMs * 10_000;
+        var t = RecordingMath.FrameTime100ns(frame);
         Check(Call(sample, 36, t), "encode");
         Check(Call(sample, 38, 10_000_000L / RecordingMath.Fps), "encode");
         lock (_writerGate) Check(Call(_writer, 6, _stream, sample), "encode");
@@ -455,7 +469,7 @@ internal sealed unsafe class ScreenRecorder
         }
     }
 
-    private void WriteFrameCpu(long nowMs)
+    private void WriteFrameCpu(long frame)
     {
         EnsureDib();
         int w = _rect.Width, h = _rect.Height, stride = w * 4, len = stride * h;
@@ -477,7 +491,7 @@ internal sealed unsafe class ScreenRecorder
             Check(Call(buffer, 6, (uint)len), "encode");
             Check(MFCreateSample(out sample), "encode");
             Check(Call(sample, 42, buffer), "encode");
-            Submit(sample, nowMs);
+            Submit(sample, frame);
         }
         finally
         {

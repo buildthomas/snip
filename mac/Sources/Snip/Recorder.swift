@@ -176,6 +176,8 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptur
     private func setUpWriter(width: Int, height: Int) throws {
         RecordingFiles.delete(url)
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+        // Index first ("fast start"), so browsers and chat apps can play and preview before the whole file arrives.
+        writer.shouldOptimizeForNetworkUse = true
         let video = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.h264,
             AVVideoWidthKey: width,
