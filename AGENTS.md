@@ -18,7 +18,8 @@ either platform.
 - **One product, two apps.** A user-facing feature, behaviour change or default lands in **both** the Windows and the
   macOS app, in the same PR where possible (see [Feature parity](#feature-parity)).
 - **Trustworthy by construction.** Small, readable code; no network; no dependencies at runtime; nothing stored beyond
-  the settings. A user should be able to audit the whole app.
+  the settings, apart from recordings waiting in the temp folder until they're saved or discarded. A user should be
+  able to audit the whole app.
 - **No runtime cost for the rest of the system.** 0% CPU when idle, no timers or polling outside the open overlay,
   keystrokes elsewhere never delayed.
 - **Instant.** Pixels are captured before any Snip window appears; the overlay shows in about 200-300 ms. Never add
@@ -54,6 +55,7 @@ either platform.
 | User-remapped shortcuts for Undo/Redo/Copy/Paste/Select All/Save | n/a | ✅ via menu items | macOS App Shortcuts |
 | Start with Windows / at login | ✅ | ✅ | |
 | Installed-apps listing, uninstall | ✅ Start menu + Installed apps | ✅ `~/Applications`, `uninstall.sh` | |
+| Screen recording to MP4 (record hotkey with live selection, Stop bar, Copy/Save/Play/Discard, system sound and mic toggles) | ✅ Win+Shift+R | ✅ ⌥⇧⌘2 (changeable) | macOS: one display per recording, average-bitrate encoding |
 | Diagnostics | log + `SNIP_TRACE=1` | log + `--diagnostics` | **gap:** no `--diagnostics` on Windows |
 
 ## Hard rules
@@ -84,10 +86,14 @@ Windows:
 
 - **Keep the hook callback cheap** (`KeyboardHook.HookProc`): no I/O, logging, locks or blocking. Hotkey decisions go
   in `HotkeyFilter` (pure, unit tested); `KeyboardHook` only feeds it.
+- **Recording stays on the GPU** where the device allows (`ScreenRecorder`: Desktop Duplication into a texture, Media
+  Foundation's hardware H.264 encoder via a DXGI device manager). The CPU copy path is only a fallback. Check
+  `RecordingBenchmark` (size and CPU) after changing it.
 - **Don't trim the working set** or otherwise page out the hook; Windows silently drops slow hooks.
 - **P/Invoke DLLs load from System32 only** (`DefaultDllImportSearchPaths` in `Native.cs`). Keep it.
-- **Ask the user before running `tests/e2e/E2E.ps1` or `Scenarios.ps1`.** They drive the real mouse and keyboard and
-  the user must keep hands off. `dotnet test` and `tests/e2e/Timing.ps1` need no input and are always fine.
+- **Ask the user before running the `tests/e2e` scripts** (`E2E.ps1`, `Scenarios.ps1`, `EscGuard.ps1`, `Record.ps1`).
+  They drive the real mouse and keyboard and the user must keep hands off; they also stop the installed Snip.
+  `dotnet test` and `tests/e2e/Timing.ps1` need no input and are always fine.
 - **Don't edit sources with Windows PowerShell `Get-Content`/`Set-Content`.** PowerShell 5.1 reads UTF-8 without a
   BOM as Windows-1252 and garbles non-ASCII text (`SourceEncodingTests` guards this).
 
@@ -160,8 +166,8 @@ macOS:
       only, overlay commands still menu items.
 - [ ] Nothing new runs while idle (timers, polling, background threads).
 - [ ] Nothing added before the screen grab; timing numbers included if capture or paint changed.
-- [ ] Nothing new written to disk, the registry or `defaults`; nothing that could contain keystrokes or screen content
-      in logs.
+- [ ] Nothing new written to disk, the registry or `defaults` (recordings only in the temp folder until saved or
+      discarded); nothing that could contain keystrokes or screen content in logs.
 - [ ] Redaction: secure styles still content-independent (tests pass on both), output flattened, insecure clearly
       labelled.
 - [ ] Failures reach the user; a `catch` that only logs is for cases the user can't act on (e.g. settings I/O).

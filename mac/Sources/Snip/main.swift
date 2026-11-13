@@ -7,16 +7,21 @@ if args.contains("--version") {
     print("Snip \(snipVersion)")
     exit(0)
 }
-if let i = args.firstIndex(of: "--set-hotkey") {
+if let flag = ["--set-hotkey", "--set-record-hotkey"].first(where: { args.contains($0) }), let i = args.firstIndex(of: flag) {
     guard i + 1 < args.count, let spec = HotkeySpec.parse(args[i + 1]) else {
-        print("Usage: Snip --set-hotkey <modifiers+key>, e.g. cmd+shift+s, ctrl+opt+2, cmd+f5")
+        print("Usage: Snip \(flag) <modifiers+key>, e.g. cmd+shift+s, ctrl+opt+2, cmd+f5")
         exit(2)
     }
     guard spec.hasRequiredModifier else {
         print("\(spec.display) needs Command, Option or Control; otherwise it would block normal typing.")
         exit(2)
     }
-    Settings.shared.hotkey = spec
+    let record = flag == "--set-record-hotkey"
+    guard spec != (record ? Settings.shared.hotkey : Settings.shared.recordHotkey) else {
+        print("\(spec.display) is already Snip's other hotkey.")
+        exit(2)
+    }
+    if record { Settings.shared.recordHotkey = spec } else { Settings.shared.hotkey = spec }
     DistributedNotificationCenter.default().postNotificationName(hotkeyChangedNotification, object: nil, userInfo: nil, deliverImmediately: true)
     Log.info("hotkey set from the command line: \(spec.spec)")
     Log.flush()

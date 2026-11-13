@@ -15,6 +15,8 @@ internal sealed class Settings
     public int RedactCell { get; set; } = 12;
     public int EmojiIndex { get; set; }
     public bool RedactSecure { get; set; } = true;
+    public bool RecordSystemSound { get; set; }
+    public bool RecordMicrophone { get; set; }
 
     public static string Directory => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Snip");
     private static string FilePath => Path.Combine(Directory, "settings.json");

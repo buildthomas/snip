@@ -26,6 +26,10 @@ and mixed-scale setups. Fix what you find here.
 | `Sources/Snip/Capture.swift` | ScreenCaptureKit capture of every display, window rectangles for click-to-select |
 | `Sources/Snip/Overlay.swift` | Per-display overlay window + view: selection, tools, bars, keyboard, copy/save |
 | `Sources/Snip/Annotations.swift` | Shapes; `RedactMark` calls SnipCore for its pixels |
+| `Sources/Snip/RecordSelect.swift` | Record hotkey: live selection over the moving screen, setup bar (sound, mic, Record) |
+| `Sources/Snip/Recorder.swift` | `ScreenRecorder`: ScreenCaptureKit frames and system sound, AVCaptureSession mic, AVAssetWriter MP4; temp files |
+| `Sources/Snip/RecordingUI.swift` | Border, Stop bar and the result window (Copy file, Save as, Play, Discard) |
+| `Sources/SnipCore/Recording.swift` | Recording limits, audio mixer and timeline, bar placement (ports of the Windows logic). Unit tested. |
 | `Sources/Snip/PixelBridge.swift` | CGImage <-> SnipCore pixel buffers, path masks |
 | `Sources/Snip/Log.swift`, `Diagnostics.swift` | File log and the `--diagnostics` report |
 
@@ -80,6 +84,10 @@ commands as menu items with standard titles.
    in the overlay. ⌘C pastes into another app at full Retina resolution; ⌘S saves PNG/JPEG and reopens in the same folder next time.
 10. Esc first deselects the active tool, then closes (with annotations: a hint, then a second Esc within 1.5 s closes); a second capture works; memory settles back after closing (Activity Monitor).
 11. Start at login toggles and survives a log out/in; `./uninstall.sh` leaves nothing behind.
+12. Recording (⌥⇧⌘2): the screen keeps moving under the dim; drag, click a window, ⌘A; Return records. The border and
+    bar don't appear in the video; ⌥⇧⌘2 again stops. With system sound on, a playing video's sound is in the file and in
+    sync; the microphone asks for permission once. Copy pastes the MP4 into Finder or a chat; Save as, Play and Discard
+    work; closing the window asks before discarding. Nothing is left in `$TMPDIR/Snip` after Discard or Save as.
 
 ## Things most likely to need fixing
 

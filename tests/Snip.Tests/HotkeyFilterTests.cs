@@ -125,6 +125,46 @@ public class HotkeyFilterTests
     }
 
     [Fact]
+    public void WinShiftR_FiresRecordOnce_SwallowsRepeatsAndRelease()
+    {
+        var f = new HotkeyFilter();
+        var first = f.OnKey(HotkeyFilter.VkR, true, 100, WinShift);
+        Assert.True(first.Swallow && first.Fire && first.SuppressStartMenu && first.Record);
+        var repeat = f.OnKey(HotkeyFilter.VkR, true, 130, WinShift);
+        Assert.True(repeat.Swallow && !repeat.Fire);
+        Assert.True(f.OnKey(HotkeyFilter.VkR, false, 200, WinShift).Swallow);
+        Assert.False(f.OnKey(HotkeyFilter.VkR, true, 300, Mods.None).Swallow);
+    }
+
+    [Fact]
+    public void WinShiftS_IsNotRecord()
+    {
+        Assert.False(new HotkeyFilter().OnKey(S, true, 100, WinShift).Record);
+    }
+
+    [Fact]
+    public void SAndRTrackTheirKeyUpsSeparately()
+    {
+        var f = new HotkeyFilter();
+        f.OnKey(S, true, 100, WinShift);
+        var r = f.OnKey(HotkeyFilter.VkR, true, 120, WinShift);
+        Assert.True(r.Fire && r.Record);
+        Assert.True(f.OnKey(S, false, 150, WinShift).Swallow);
+        Assert.True(f.OnKey(HotkeyFilter.VkR, false, 160, WinShift).Swallow);
+        Assert.False(f.OnKey(S, true, 200, Mods.None).Swallow);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(1 | 2 | 8)]
+    public void RWithoutExactlyWinShift_PassesThrough(int modBits)
+    {
+        var f = new HotkeyFilter();
+        Assert.False(f.OnKey(HotkeyFilter.VkR, true, 100, (Mods)modBits).Swallow);
+    }
+
+    [Fact]
     public void OtherKeys_AlwaysPass()
     {
         var f = new HotkeyFilter();

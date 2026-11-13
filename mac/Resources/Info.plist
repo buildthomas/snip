@@ -24,6 +24,8 @@
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Snip records your microphone into screen recordings when you turn the microphone on.</string>
     <key>NSHumanReadableCopyright</key>
     <string>MIT License</string>
 </dict>

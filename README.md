@@ -23,7 +23,7 @@ picture.
 
 | | Windows | macOS |
 |---|---|---|
-| Capture | **Win+Shift+S** or **PrtSc**, or left-click the tray icon | **⇧⌘2** by default (any combination you like, see below), or **Capture** in the menu-bar menu |
+| Capture | **Win+Shift+S** or **PrtSc**, or left-click the tray icon (**Win+Shift+R** records a video) | **⇧⌘2** by default (any combination you like, see below), or **Capture** in the menu-bar menu (**⌥⇧⌘2** records a video) |
 | Copy and close | **Ctrl+C** or **Enter** | **⌘C** or **Return** |
 | Save as (opens in the last folder used) | **Ctrl+S** (PNG/JPG/BMP) | **⌘S** (PNG/JPEG) |
 | Undo / redo | **Ctrl+Z** / **Ctrl+Y** | **⌘Z** / **⇧⌘Z** (or your own App Shortcuts) |
@@ -73,17 +73,44 @@ The redact bar appears next to the tool: **Brush · Box | Black · Pixelate · B
 
 Every redaction is flattened into the copied or saved image; there is no hidden layer to remove.
 
+### Record a video
+
+Press **Win+Shift+R** on Windows or **⌥⇧⌘2** on macOS (or **Record video** in the tray or menu-bar menu). The screen
+keeps moving under a light dim: drag an area, click a window to take exactly that window, or press **Ctrl+A** / **⌘A**
+for the whole display; drag the handles or inside the selection to adjust. Then press **Record** or **Enter** /
+**Return**. **Esc** or right-click cancels.
+
+A thin red border marks what's being recorded, and a small bar next to it shows the time with **Stop** and
+**Discard** (drag it anywhere; it stays out of the video). The record hotkey again, the capture hotkey, or clicking the
+tray icon (Windows) or **Stop recording** in the menu (macOS) also stops. The pointer is included and there's no time
+limit. On macOS a recording covers one display, and the microphone needs the Microphone permission (asked the first
+time you record with it on).
+
+Sound is off unless you turn it on, with the buttons next to **Record**: the speaker (**S**) adds **system sound**
+(what you hear), the microphone (**M**) adds your **microphone**. Each is a separate on/off switch, remembered for next
+time, and the recording bar shows which ones are on. Sound adds about 0.7 MB per minute (AAC, 96 kbps). With the
+microphone on, Snip starts it while you select (your system's microphone indicator lights up then), so it's already
+running when you press Record; nothing from before that is kept.
+
+When you stop, a window shows the last frame, the length and the file size: **Copy** puts the MP4 on the clipboard as
+a file (paste it into a chat or an email), **Save as...** writes it where you like, **Play** opens it in your video
+player, **Discard** deletes it. Recordings are H.264 MP4s encoded on the graphics card where possible, so the CPU
+stays nearly idle, and they're small: on Windows about 0.5-1.5 MB for 10 seconds of a 2560x1440 screen; macOS uses an
+average bitrate, so busy screens come out larger. Annotations aren't part of videos yet.
+
 ### Tray and menu-bar menus
 
-- **Windows tray:** Capture, Use PrintScreen key (on/off), Start with Windows (on/off), Open settings folder, Exit.
-- **macOS menu bar:** Capture, current hotkey and **Change hotkey…**, Start at login, Debug logging, Open log,
-  Write diagnostics to log, Quit.
+- **Windows tray:** Capture, Record video, Use PrintScreen key (on/off), Start with Windows (on/off), Open settings folder, Exit.
+- **macOS menu bar:** Capture, Record video (Stop recording while one runs), the hotkeys with **Change hotkey…** and
+  **Change record hotkey…**, Start at login, Debug logging, Open log, Write diagnostics to log, Quit.
 
 ### Choosing the hotkey
 
-- **Windows:** Win+Shift+S (taken over from the Snipping Tool) and PrtSc (can be turned off in the tray menu).
-- **macOS:** **Change hotkey…** records any combination with ⌘, ⌥ or ⌃ (press it, then Save). From a terminal:
-  `~/Applications/Snip.app/Contents/MacOS/Snip --set-hotkey cmd+shift+s`. Combinations another app or macOS already
+- **Windows:** Win+Shift+S and Win+Shift+R (screenshot and recording, both taken over from the Snipping Tool) and
+  PrtSc (can be turned off in the tray menu).
+- **macOS:** **Change hotkey…** and **Change record hotkey…** record any combination with ⌘, ⌥ or ⌃ (press it, then
+  Save). From a terminal: `~/Applications/Snip.app/Contents/MacOS/Snip --set-hotkey cmd+shift+s` (or
+  `--set-record-hotkey`). Combinations another app or macOS already
   owns are refused and the previous hotkey stays; to use ⇧⌘3/4/5, turn the system screenshot shortcut off first
   (System Settings > Keyboard > Keyboard Shortcuts > Screenshots). Undo, Redo, Copy, Paste, Select All and Save… are
   regular menu items, so App Shortcuts you customise in System Settings apply in the overlay.
@@ -131,7 +158,10 @@ Security > Screen Recording); after granting it, quit Snip from its menu and ope
 ## Privacy and footprint
 
 - No network code at all, on either platform. Images only go to the clipboard or to a file you pick.
-- Settings are the only thing stored: `%APPDATA%\Snip\settings.json` on Windows, the `com.buildthomas.snip`
+- Recordings are kept in a `Snip` folder in your temp folder (`%TEMP%\Snip`, or the per-user `$TMPDIR` on macOS) only
+  until you save or discard them (a copied recording stays there so it can be pasted); leftovers are removed when Snip
+  starts and by the uninstallers.
+- Settings are the only other thing stored: `%APPDATA%\Snip\settings.json` on Windows, the `com.buildthomas.snip`
   `defaults` domain on macOS (last save folder, color, size, tool options, toggles).
 - Logs record lifecycle events, timings and errors, never typed text or screen content: `%APPDATA%\Snip\snip.log`
   (Windows; timings with `SNIP_TRACE=1`) and `~/Library/Logs/Snip/snip.log` (macOS).
@@ -142,7 +172,8 @@ Security > Screen Recording); after granting it, quit Snip from its menu and ope
   just the S and suppresses the Start menu; all other keys pass through untouched. Snip re-arms it after unlock,
   resume and every capture. System DLLs are only loaded from System32, so a planted DLL next to `Snip.exe` is ignored.
 - **macOS hotkey:** Carbon's `RegisterEventHotKey`, which only ever sees its own combination and needs no Accessibility
-  or Input Monitoring permission. Capture uses ScreenCaptureKit, hence the Screen Recording permission.
+  or Input Monitoring permission. Capture and recording use ScreenCaptureKit, hence the Screen Recording permission;
+  the microphone (only when turned on) uses AVFoundation and its own permission.
 
 ## Known limits
 
@@ -169,6 +200,7 @@ Windows end-to-end scripts (they drive the real mouse and keyboard, except Timin
 powershell -STA -File tests\e2e\E2E.ps1 -Exe <Snip.exe> -OutDir <dir>        # main flow
 powershell -STA -File tests\e2e\Scenarios.ps1 -Exe <Snip.exe> -OutDir <dir>  # menus, window click, save dialog
 powershell -STA -File tests\e2e\EscGuard.ps1 -Exe <Snip.exe> -OutDir <dir>  # Esc twice to discard annotations
+powershell -STA -File tests\e2e\Record.ps1 -Exe <Snip.exe> -OutDir <dir>    # screen recording flow
 powershell -File tests\e2e\Timing.ps1 -Exe <Snip.exe>                         # overlay latency, no input needed
 ```
 

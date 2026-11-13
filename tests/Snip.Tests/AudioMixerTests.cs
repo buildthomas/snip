@@ -1,0 +1,145 @@
+using Xunit;
+
+namespace Snip.Tests;
+
+public class AudioMixerTests
+{
+    private static float[] Stereo(int frames, float v) => Enumerable.Repeat(v, frames * 2).ToArray();
+
+    [Fact]
+    public void GapsBecomeSilenceAndPacketsLandAtTheirTime()
+    {
+        var m = new AudioMixer();
+        m.Add(Stereo(10, 0.5f), firstFrame: 100);
+        var pcm = m.TakeUntil(120);
+        Assert.Equal(240, pcm.Length);
+        Assert.All(pcm.Take(200), s => Assert.Equal(0, (int)s));
+        Assert.All(pcm.Skip(200).Take(20), s => Assert.Equal(16384, (int)s));
+        Assert.All(pcm.Skip(220), s => Assert.Equal(0, (int)s));
+        Assert.Equal(120, m.Written);
+    }
+
+    [Fact]
+    public void SourcesAreSummedAndClipped()
+    {
+        var m = new AudioMixer();
+        m.Add(Stereo(4, 0.25f), 0);
+        m.Add(Stereo(4, 0.25f), 0);
+        m.Add(Stereo(4, 0.9f), 2);
+        var pcm = m.TakeUntil(4);
+        Assert.Equal(16384, (int)pcm[0]);
+        Assert.Equal(32767, (int)pcm[4]);
+    }
+
+    [Theory]
+    [InlineData(10_000_000L)]
+    [InlineData(3_579_545L)]
+    [InlineData(24_000_000L)]
+    public void FrameAt_StaysExactAfterDaysOfUptime(long ticksPerSecond)
+    {
+        var start = ticksPerSecond * 60 * 60 * 24 * 30;
+        var startIn100ns = (ulong)(60L * 60 * 24 * 30 * 10_000_000);
+        Assert.Equal(0, AudioCapture.FrameAt(startIn100ns, start, ticksPerSecond));
+        Assert.Equal(48_000, AudioCapture.FrameAt(startIn100ns + 10_000_000, start, ticksPerSecond));
+        Assert.Equal(-4_800, AudioCapture.FrameAt(startIn100ns - 1_000_000, start, ticksPerSecond));
+    }
+
+    [Fact]
+    public void Timeline_FirstPacketGoesWhereItsStampSays()
+    {
+        Assert.Equal((11_328L, 0), AudioTimeline.Place(-1, 11_328, 480, discontinuity: true, arrivalFrame: 0));
+    }
+
+    [Fact]
+    public void Timeline_ABurstWithTheSameStampIsLaidOutInSequence()
+    {
+        long next = -1, stamp = 50_000;
+        var starts = new List<long>();
+        for (int i = 0; i < 8; i++)
+        {
+            var (at, skip) = AudioTimeline.Place(next, stamp, 480, discontinuity: false, arrivalFrame: 0);
+            Assert.Equal(0, skip);
+            starts.Add(at);
+            next = at + 480;
+        }
+        Assert.Equal(Enumerable.Range(0, 8).Select(i => 50_000L + i * 480), starts);
+    }
+
+    [Fact]
+    public void Timeline_JitterIsIgnored()
+    {
+        Assert.Equal((10_480L, 0), AudioTimeline.Place(10_480, 10_480 + 700, 480, discontinuity: false, arrivalFrame: 0));
+        Assert.Equal((10_480L, 0), AudioTimeline.Place(10_480, 10_480 - 3_000, 480, discontinuity: false, arrivalFrame: 0));
+    }
+
+    [Fact]
+    public void Timeline_StampsRacingAheadAfterSilenceDontChopTheSound()
+    {
+        // Logged on a real device: continuous packets stamped 40-50 ms apart while the buffer fills.
+        long next = 120_000;
+        foreach (var jump in new[] { 2_400, 1_920, 2_400, 1_920, 2_400 })
+        {
+            var (at, _) = AudioTimeline.Place(next, next + jump, 480, discontinuity: false, arrivalFrame: 0);
+            Assert.Equal(next, at);
+            next = at + 480;
+        }
+    }
+
+    [Fact]
+    public void Timeline_AFlaggedGapLeavesSilence()
+    {
+        Assert.Equal((200_000L, 0), AudioTimeline.Place(10_480, 200_000, 480, discontinuity: true, arrivalFrame: 0));
+    }
+
+    [Fact]
+    public void Timeline_AnUnflaggedPauseResyncsOnceFollowingOnWouldBeTooFarInThePast()
+    {
+        // Logged on a real device: after a 1.5 s pause the stream resumed without a discontinuity flag.
+        Assert.Equal((200_000L, 0), AudioTimeline.Place(130_000, 200_000, 480, discontinuity: false, arrivalFrame: 195_000));
+    }
+
+    [Fact]
+    public void Timeline_SteadyStreamsFollowOnEvenWhenStampsRunAheadOfArrival()
+    {
+        Assert.Equal((130_000L, 0), AudioTimeline.Place(130_000, 140_000, 480, discontinuity: false, arrivalFrame: 128_000));
+    }
+
+    [Fact]
+    public void Timeline_FarBehindDropsTheOverlapInsteadOfStacking()
+    {
+        var (at, skip) = AudioTimeline.Place(100_000, 100_000 - AudioTimeline.DriftFrames - 100, 480, discontinuity: false, arrivalFrame: 0);
+        Assert.Equal(100_000, at);
+        Assert.Equal(480, skip);
+    }
+
+    [Fact]
+    public void LateAudioIsDroppedNotShifted()
+    {
+        var m = new AudioMixer();
+        m.TakeUntil(50);
+        m.Add(Stereo(20, 0.5f), firstFrame: 40);
+        var pcm = m.TakeUntil(70);
+        Assert.Equal(40, pcm.Length);
+        Assert.All(pcm.Take(20), s => Assert.Equal(16384, (int)s));
+        Assert.All(pcm.Skip(20), s => Assert.Equal(0, (int)s));
+    }
+}
+
+public class AudioTimelineMicrophoneTests
+{
+    [Fact]
+    public void AMicrophoneThatStartsLateStreamsOnInsteadOfLeavingGaps()
+    {
+        // Logged on a real device: right after start the microphone delivers its first packets ~0.1-0.2 s late.
+        Assert.Equal((29_793L, 0), AudioTimeline.Place(29_793, 29_892, 480, discontinuity: false, arrivalFrame: 40_000, canPause: false));
+        Assert.Equal(40_000 - 480, AudioTimeline.Place(29_793, 29_892, 480, discontinuity: false, arrivalFrame: 40_000, canPause: true).At);
+    }
+
+    [Fact]
+    public void AMicrophoneThatLostSamplesCatchesUpInsteadOfFallingBehindForGood()
+    {
+        var ahead = 100_000 + AudioTimeline.MaxLagFrames + 1;
+        Assert.Equal((ahead, 0), AudioTimeline.Place(100_000, ahead, 480, discontinuity: false, arrivalFrame: 0, canPause: false));
+        Assert.Equal((100_000L, 0), AudioTimeline.Place(100_000, 100_000 + 2_000, 480, discontinuity: false, arrivalFrame: 0, canPause: false));
+    }
+}

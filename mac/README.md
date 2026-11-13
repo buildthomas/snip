@@ -29,7 +29,8 @@ Recording permission again after every rebuild.
 
 - **Screen Recording** (System Settings > Privacy & Security > Screen Recording) is required for capture. Snip asks on
   the first capture; quit and reopen Snip after granting it.
-- No Accessibility or Input Monitoring permission: the hotkey uses Carbon's `RegisterEventHotKey`.
+- **Microphone** is only asked for the first time you record with the microphone turned on.
+- No Accessibility or Input Monitoring permission: the hotkeys use Carbon's `RegisterEventHotKey`.
 
 ## Command line
 
@@ -39,6 +40,7 @@ All flags work on `~/Applications/Snip.app/Contents/MacOS/Snip`:
 |---|---|
 | `--capture` | Take a screenshot (asks the running copy if there is one); also `open -a Snip --args --capture` |
 | `--set-hotkey cmd+shift+s` | Set the global hotkey; a running copy switches right away |
+| `--set-record-hotkey cmd+opt+shift+2` | Set the record hotkey the same way |
 | `--diagnostics` | Print macOS version, architecture, permission, hotkey, login item and display details |
 | `--version` | Print the version |
 | `--unregister-login` | Turn off Start at login (used by `uninstall.sh`) |

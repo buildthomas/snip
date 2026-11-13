@@ -69,12 +69,51 @@ macOS:   hotkey event ─► Capture.captureAll (SCScreenshotManager per display
   working set is not force-trimmed: paging the hook's code back in on the next keystroke risks Windows silently
   removing the hook.
 
+## Screen recording (Windows)
+
+```
+Win+Shift+R ─► RecordSelectOverlay over the live screen ─► selection settles ─► ScreenRecorder.Prepare (own thread)
+Record/Enter ─► overlay closes, border + bar shown ─► Begin (first frame ≥ 60 ms later) ─► MP4 in %TEMP%\Snip ─► RecordingResultForm
+```
+
+- **Live selection:** four windows, all excluded from capture: a dim layer (uniform alpha, click-through, a region
+  hole over the selection), a nearly transparent input window on top that takes mouse and keys, the selection frame
+  (border, handles, size label as one region-shaped window) and the setup bar. One per-pixel-alpha window would need a
+  virtual-screen-sized bitmap (tens of MB on multi-monitor setups) redrawn on every mouse move.
+  Esc is registered as a hotkey while it's open, so it cancels even if Windows doesn't give the overlay focus.
+- **Snappy start:** setup (GPU device ~150-250 ms, hardware encoder ~200-300 ms) starts as soon as a selection settles
+  (or a sound toggle changes; debounced by 150 ms) and is thrown away if recording doesn't start. With it prepared,
+  capture runs ~60 ms after the click; without, ~350 ms. The border and bar appear immediately either way; the bar's
+  dot turns red once frames are being captured. With the microphone on, the preparation also opens and runs it
+  (keeping nothing until Begin): a microphone needs ~0.6-0.75 s to deliver its first sound, which otherwise left the
+  start of the recording silent. System sound alone is opened on Begin.
+- **Temp files:** each recording reserves a unique name in `%TEMP%\Snip` up front. Files are deleted on Discard, after
+  Save as, on a failed start and when Snip exits with a recording or unresolved result open; anything left (a copied
+  file, a delete that failed because a player held it) goes at the next start or on uninstall.
+- **Capture:** DXGI Desktop Duplication, one duplication per display the area touches (all on one adapter). Changed
+  frames are copied on the GPU into an accumulation texture; `AcquireNextFrame` blocks until something changes, so a
+  still screen costs nothing.
+- **Encode:** Media Foundation sink writer with a DXGI device manager, so the hardware H.264 encoder takes GPU textures
+  directly (colour conversion also on the GPU). Quality-based rate control, High profile, a keyframe every 10 s.
+  Without a usable GPU path it falls back to copying frames to memory (higher CPU, same file).
+- **Frames:** at most 30 per second and only when the screen or pointer changed, plus one per second to keep players
+  happy. The pointer is drawn into each frame with GDI (`GetDC` on the texture).
+- **Chrome:** the border strips and the Stop bar are excluded from capture (`WDA_EXCLUDEFROMCAPTURE`) and never take
+  focus. The capture hotkey stops a running recording.
+- **Sound (optional, off by default):** WASAPI loopback of the default output for system sound and the default
+  microphone, both converted by Windows to 48 kHz stereo float. `AudioCapture` polls every 10 ms and places each
+  packet on the recording's timeline by its QPC timestamp (`AudioMixer`), so silence gaps (loopback sends nothing
+  while nothing plays) and clock drift don't push sound out of sync. Sources are summed and written 200 ms behind
+  real time as 16-bit PCM to Media Foundation's AAC encoder (96 kbps), a second track in the same MP4.
+- **Limits:** up to roughly 4K per side (H.264 levels), no rotated displays. Recording stops by itself when less than
+  1 GB of disk space is left. A sound device that disappears mid-recording becomes silence and is reported after.
+
 ## Hotkeys
 
 ### Windows
 
-- Win+Shift+S belongs to the shell, so `RegisterHotKey` can't claim it. A low-level keyboard hook swallows the S
-  key-down/up only; Win and Shift pass through. A tagged dummy key (VK 0xE8, `dwExtraInfo` = "SNIP") is injected so the
+- Win+Shift+S and Win+Shift+R (record) belong to the shell, so `RegisterHotKey` can't claim them. A low-level keyboard
+  hook swallows the S or R key-down/up only; Win and Shift pass through. A tagged dummy key (VK 0xE8, `dwExtraInfo` = "SNIP") is injected so the
   Start menu doesn't open when Win is released.
 - PrtSc without modifiers is taken too (toggle in the tray). Alt+PrtSc, Win+PrtSc and Ctrl+PrtSc stay with Windows.
 - All decisions live in `HotkeyFilter`, a pure state machine fed (vk, down/up, timestamp, modifiers). It handles key
@@ -154,7 +193,8 @@ macOS:
 - Written by `mac/install.sh`, removed by `mac/uninstall.sh`: `~/Applications/Snip.app`; the uninstaller also removes
   the login item, settings, logs and the Screen Recording permission entry.
 
-Nothing else is written on either platform. No temp files, no caches on disk.
+Nothing else is written on either platform, apart from Windows recordings in `%TEMP%\Snip` (deleted on Save or
+Discard, leftovers on the next start). No caches on disk.
 
 ## Security model
 

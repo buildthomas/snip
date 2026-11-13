@@ -7,6 +7,38 @@ namespace Snip;
 
 internal static class Native
 {
+    // The hotkey's keystrokes are swallowed, so Windows doesn't let our windows take focus on their own.
+    public static void ForceForeground(Form form)
+    {
+        if (GetForegroundWindow() == form.Handle) return;
+        var fg = GetForegroundWindow();
+        var fgThread = GetWindowThreadProcessId(fg, IntPtr.Zero);
+        var me = GetCurrentThreadId();
+        // Attaching to a hung app's input queue could stall this window too.
+        var attached = fgThread != 0 && fgThread != me && !IsHungAppWindow(fg) && AttachThreadInput(me, fgThread, true);
+        SetForegroundWindow(form.Handle);
+        form.Activate();
+        if (attached) AttachThreadInput(me, fgThread, false);
+    }
+
+    public static void SquareCorners(IntPtr hwnd)
+    {
+        var square = 1;
+        DwmSetWindowAttribute(hwnd, 33 /* WINDOW_CORNER_PREFERENCE: DONOTROUND */, ref square, sizeof(int));
+    }
+
+    public static void DarkTitleBar(IntPtr hwnd)
+    {
+        var dark = 1;
+        DwmSetWindowAttribute(hwnd, 20 /* USE_IMMERSIVE_DARK_MODE */, ref dark, sizeof(int));
+    }
+
+    [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
+    [DllImport("user32.dll")] public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint mods, uint vk);
+    [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+    public const int WM_HOTKEY = 0x0312;
+    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int w, int h, uint flags);
+
     public const int WH_KEYBOARD_LL = 13;
     public const int WM_KEYDOWN = 0x0100;
     public const int WM_KEYUP = 0x0101;

@@ -18,4 +18,5 @@ Remove-WithRetry (Join-Path ([Environment]::GetFolderPath('Programs')) 'Snip.lnk
 Remove-WithRetry 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Snip'
 Remove-WithRetry $target
 Remove-WithRetry (Join-Path $env:APPDATA 'Snip')
+Remove-WithRetry (Join-Path ([IO.Path]::GetTempPath()) 'Snip')
 Write-Host 'Snip removed.'

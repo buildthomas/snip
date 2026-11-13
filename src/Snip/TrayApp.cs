@@ -14,6 +14,13 @@ internal sealed class TrayApp : ApplicationContext
     private readonly ToolStripMenuItem _startupItem;
     private readonly ToolStripMenuItem _printScreenItem;
     private OverlayForm? _overlay;
+    private RecordSelectOverlay? _recordSelect;
+    private RecordingController? _recording;
+    private Rectangle? _pendingRecording;
+    private ScreenRecorder? _prepared;
+    private string? _prepareError;
+    private readonly System.Windows.Forms.Timer _prepareDelay = new() { Interval = 150 };
+    private Rectangle _prepareArea;
 
     public TrayApp(EventWaitHandle captureSignal, bool captureNow)
     {
@@ -35,6 +42,7 @@ internal sealed class TrayApp : ApplicationContext
         _printScreenItem = new ToolStripMenuItem("Use PrintScreen key", null, (_, _) => TogglePrintScreen());
         var menu = new ContextMenuStrip();
         menu.Items.Add(new ToolStripMenuItem("Capture  (Win+Shift+S / PrtSc)", null, (_, _) => Capture()));
+        menu.Items.Add(new ToolStripMenuItem("Record video  (Win+Shift+R)", null, (_, _) => Record()));
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(_printScreenItem);
         menu.Items.Add(_startupItem);
@@ -47,15 +55,17 @@ internal sealed class TrayApp : ApplicationContext
             _printScreenItem.Checked = _settings.PrintScreenEnabled;
         };
 
-        _tray = new NotifyIcon { Icon = _icon, Text = "Snip - Win+Shift+S or PrtSc", ContextMenuStrip = menu, Visible = true };
+        _tray = new NotifyIcon { Icon = _icon, Text = "Snip - Win+Shift+S or PrtSc; record Win+Shift+R", ContextMenuStrip = menu, Visible = true };
         _tray.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) Capture(); };
 
-        _hook = new KeyboardHook(Capture) { PrintScreenEnabled = _settings.PrintScreenEnabled };
+        _hook = new KeyboardHook(record => { if (record) Record(); else Capture(); }) { PrintScreenEnabled = _settings.PrintScreenEnabled };
         _signalWait = ThreadPool.RegisterWaitForSingleObject(captureSignal, (_, _) => _ui.Post(_ => Capture(), null), null, -1, false);
 
         SystemEvents.SessionSwitch += OnSessionSwitch;
         SystemEvents.PowerModeChanged += OnPowerModeChanged;
 
+        _prepareDelay.Tick += (_, _) => { _prepareDelay.Stop(); PrepareRecording(_prepareArea); };
+        RecordingFiles.CleanUp();
         if (captureNow) _ui.Post(_ => Capture(), null);
     }
 
@@ -78,9 +88,14 @@ internal sealed class TrayApp : ApplicationContext
 
     public void Capture()
     {
-        if (_overlay != null)
+        if (_recording != null)
         {
-            _overlay.Activate();
+            _recording.Stop();
+            return;
+        }
+        if (_overlay != null || _recordSelect != null)
+        {
+            ((Form?)_overlay ?? _recordSelect)!.Activate();
             return;
         }
 
@@ -124,6 +139,79 @@ internal sealed class TrayApp : ApplicationContext
         _overlay.Show();
     }
 
+    /// Win+Shift+R: pick an area over the live screen, or stop the recording that's running.
+    public void Record()
+    {
+        if (_recording != null)
+        {
+            _recording.Stop();
+            return;
+        }
+        if (_overlay != null || _recordSelect != null)
+        {
+            ((Form?)_recordSelect ?? _overlay)!.Activate();
+            return;
+        }
+        var previousForeground = Native.GetForegroundWindow();
+        var screen = SystemInformation.VirtualScreen;
+        _recordSelect = new RecordSelectOverlay(screen, WindowFinder.VisibleWindows(screen), _settings);
+        // Debounced, so quick adjustments don't stack up encoder sessions.
+        _recordSelect.SelectionSettled += area => { _prepareArea = area; _prepareDelay.Stop(); _prepareDelay.Start(); };
+        _recordSelect.RecordRequested += area => _pendingRecording = area;
+        _recordSelect.FormClosed += (_, _) =>
+        {
+            _prepareDelay.Stop();
+            _recordSelect.Dispose();
+            _recordSelect = null;
+            _settings.Save();
+            if (previousForeground != IntPtr.Zero) Native.SetForegroundWindow(previousForeground);
+            _hook.Reinstall();
+            if (_pendingRecording is Rectangle area)
+            {
+                _pendingRecording = null;
+                StartRecording(area);
+            }
+            else
+            {
+                _prepared?.Cancel();
+                _prepared = null;
+            }
+        };
+        _recordSelect.Show();
+    }
+
+    private void PrepareRecording(Rectangle area)
+    {
+        if (_prepared?.Matches(area, _settings.RecordSystemSound, _settings.RecordMicrophone) == true) return;
+        _prepared?.Cancel();
+        _prepared = null;
+        _prepareError = null;
+        try { _prepared = ScreenRecorder.Prepare(area, RecordingFiles.NewPath(), _settings.RecordSystemSound, _settings.RecordMicrophone); }
+        catch (Exception ex)
+        {
+            Log.Write($"recording prepare failed: {ex.Message}");
+            _prepareError = ex.Message;
+        }
+    }
+
+    private void StartRecording(Rectangle area)
+    {
+        PrepareRecording(area);
+        var recorder = _prepared;
+        _prepared = null;
+        if (recorder == null)
+        {
+            MessageBox.Show($"Couldn't start recording.\n\n{_prepareError}", "Snip", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        _recording = RecordingController.Start(recorder, _settings);
+        _recording.Ended += () =>
+        {
+            _recording = null;
+            _hook.Reinstall();
+        };
+    }
+
     private void ToggleStartup()
     {
         try
@@ -160,6 +248,11 @@ internal sealed class TrayApp : ApplicationContext
             _tray.Dispose();
             _icon.Dispose();
             _overlay?.Dispose();
+            _recordSelect?.Close();
+            _prepareDelay.Dispose();
+            _prepared?.Cancel();
+            _recording?.Abort();
+            foreach (var f in Application.OpenForms.OfType<RecordingResultForm>().ToList()) f.DiscardOnExit();
         }
         base.Dispose(disposing);
     }
