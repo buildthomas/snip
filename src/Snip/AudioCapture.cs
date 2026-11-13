@@ -59,6 +59,8 @@ internal static class AudioTimeline
     {
         if (nextFrame < 0 || discontinuity && stampedFrame > nextFrame) return (stampedFrame, 0);
         if (canPause && nextFrame + frames < arrivalFrame - MaxLagFrames) return (Math.Max(stampedFrame, arrivalFrame - frames), 0);
+        // A stream that can't pause lost samples (a glitch, or its clock runs slow): catch up, or it falls behind for good.
+        if (!canPause && stampedFrame > nextFrame + MaxLagFrames) return (stampedFrame, 0);
         if (stampedFrame < nextFrame - DriftFrames) return (nextFrame, (int)Math.Min(frames, nextFrame - stampedFrame));
         return (nextFrame, 0);
     }

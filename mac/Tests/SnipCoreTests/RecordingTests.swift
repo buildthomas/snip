@@ -105,6 +105,12 @@ final class AudioTimelineTests: XCTestCase {
         XCTAssertEqual(AudioTimeline.place(next: 29_793, stamped: 29_892, frames: 480, discontinuity: false, arrival: 40_000).at, 40_000 - 480)
     }
 
+    func testMicrophoneThatLostSamplesCatchesUp() {
+        let ahead = 100_000 + AudioTimeline.maxLagFrames + 1
+        XCTAssertTrue(AudioTimeline.place(next: 100_000, stamped: ahead, frames: 480, discontinuity: false, arrival: 0, canPause: false) == (ahead, 0))
+        XCTAssertTrue(AudioTimeline.place(next: 100_000, stamped: 102_000, frames: 480, discontinuity: false, arrival: 0, canPause: false) == (100_000, 0))
+    }
+
     func testFarBehindDropsTheOverlap() {
         let r = AudioTimeline.place(next: 100_000, stamped: 100_000 - AudioTimeline.driftFrames - 100, frames: 480, discontinuity: false, arrival: 0)
         XCTAssertEqual(r.at, 100_000)

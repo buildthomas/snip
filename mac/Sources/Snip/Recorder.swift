@@ -273,14 +273,25 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptur
             DispatchQueue.main.async { started?() }
         }
         guard videoInput.isReadyForMoreMediaData else { return }
-        if !videoInput.append(sb) {
+        // A keep-alive frame may already sit at or after this one's time; the writer needs rising timestamps.
+        var sample = sb
+        var at = pts
+        if frames > 0 && pts <= lastPTS {
+            at = lastPTS + CMTime(value: 1, timescale: 600)
+            var timing = CMSampleTimingInfo(duration: .invalid, presentationTimeStamp: at, decodeTimeStamp: .invalid)
+            var copy: CMSampleBuffer?
+            guard CMSampleBufferCreateCopyWithNewTiming(allocator: kCFAllocatorDefault, sampleBuffer: sb, sampleTimingEntryCount: 1,
+                                                        sampleTimingArray: &timing, sampleBufferOut: &copy) == noErr, let copy else { return }
+            sample = copy
+        }
+        if !videoInput.append(sample) {
             fail("Couldn't encode the video: \(writer.error?.localizedDescription ?? "unknown error")")
             return
         }
         frames += 1
-        lastPTS = pts
+        lastPTS = at
         lastArrival = Self.hostNow
-        lastSample = sb
+        lastSample = sample
     }
 
     /// Frames only arrive when the screen changes; like Windows, a still screen gets the last frame again every second.
@@ -341,9 +352,14 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptur
         }
     }
 
-    private func writeAudio(until frame: Int64) {
+    private func writeAudio(until frame: Int64, final: Bool = false) {
         guard let start = sessionStart, let audioInput, let audioFormat, frame > mixer.written else { return }
-        guard audioInput.isReadyForMoreMediaData else { return }
+        // The last chunk must not be dropped; give the encoder a moment if it's busy.
+        for _ in 0..<(final ? 50 : 0) where !audioInput.isReadyForMoreMediaData { usleep(10_000) }
+        guard audioInput.isReadyForMoreMediaData else {
+            if final { audioError = audioError ?? "The end of the sound couldn't be written." }
+            return
+        }
         let first = mixer.written
         let pcm = mixer.take(until: frame)
         let count = pcm.count / AudioMixer.channels
@@ -370,6 +386,8 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptur
     func stream(_ stream: SCStream, didStopWithError error: Error) {
         queue.async { [weak self] in
             guard let self, !self.stopping else { return }
+            // Already stopped: don't wait for a stopCapture completion that may never come.
+            self.stream = nil
             if self.sessionStart == nil { self.fail(error.localizedDescription) }
             else { self.autoStop("Recording stopped: \(error.localizedDescription)") }
         }
@@ -441,7 +459,7 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptur
             return
         }
         let end = lastPTS + CMTimeMaximum(CMTime(value: 1, timescale: CMTimeScale(RecordingMath.fps)), stopHost - lastArrival)
-        writeAudio(until: Int64(((end - start).seconds * Double(AudioMixer.rate)).rounded()))
+        writeAudio(until: Int64(((end - start).seconds * Double(AudioMixer.rate)).rounded()), final: true)
         videoInput?.markAsFinished()
         audioInput?.markAsFinished()
         writer.endSession(atSourceTime: end)

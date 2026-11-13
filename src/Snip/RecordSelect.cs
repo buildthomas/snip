@@ -108,6 +108,14 @@ internal sealed class RecordSelectOverlay : Form
         base.WndProc(ref m);
     }
 
+    // Activating this window raises it above the frame and bar; put them back on top so the bar stays clickable.
+    protected override void OnActivated(EventArgs e)
+    {
+        base.OnActivated(e);
+        if (_frame.Visible) _frame.RaiseTop();
+        if (_bar.Visible) _bar.RaiseTop();
+    }
+
     protected override void OnShown(EventArgs e)
     {
         _dim.Show();

@@ -86,6 +86,8 @@ public enum AudioTimeline {
         let n = Int64(frames)
         if next < 0 || discontinuity && stamped > next { return (stamped, 0) }
         if canPause && next + n < arrival - maxLagFrames { return (max(stamped, arrival - n), 0) }
+        // A stream that can't pause lost samples (a glitch, or its clock runs slow): catch up, or it falls behind for good.
+        if !canPause && stamped > next + maxLagFrames { return (stamped, 0) }
         if stamped < next - driftFrames { return (next, Int(min(n, next - stamped))) }
         return (next, 0)
     }

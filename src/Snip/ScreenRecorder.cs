@@ -203,6 +203,12 @@ internal sealed unsafe class ScreenRecorder
             }
             if (_audio == null && (_systemSound || _microphone)) _audio = AudioCapture.Create(_systemSound, _microphone);
         }
+        catch (Exception) when (_cancelled)
+        {
+            Log.Trace("recording: cancelled while preparing");
+            Abandon();
+            return;
+        }
         catch (Exception ex)
         {
             Log.Write($"recording start failed: {ex}");
@@ -602,6 +608,7 @@ internal sealed unsafe class ScreenRecorder
             InitEncoder();
         }
         Log.Trace($"recording setup: encoder {sw.ElapsedMilliseconds} ms");
+        if (_cancelled) throw new OperationCanceledException();
         // A microphone takes ~0.5-1 s to deliver its first sound; start it now, keep nothing until recording begins.
         if (_microphone)
         {

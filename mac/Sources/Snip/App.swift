@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotkeyInfoItem: NSMenuItem!
     private var recordItem: NSMenuItem!
     private var recordHotkeyInfoItem: NSMenuItem!
+    private var recordHotkeyRegistered = false
     private let recorder = HotkeyRecorder()
     private var loginItem: NSMenuItem!
     private var debugItem: NSMenuItem!
@@ -37,7 +38,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !hotKey.register(Settings.shared.hotkey) {
             notify("Snip couldn't register \(Settings.shared.hotkey.display). Another app or a macOS shortcut (System Settings > Keyboard > Keyboard Shortcuts) probably uses it. Pick another one with Change hotkey in the Snip menu.")
         }
-        if !recordHotKey.register(Settings.shared.recordHotkey) {
+        recordHotkeyRegistered = recordHotKey.register(Settings.shared.recordHotkey)
+        if !recordHotkeyRegistered {
             Log.info("record hotkey \(Settings.shared.recordHotkey.display) unavailable; Record video stays in the menu")
         }
         DistributedNotificationCenter.default().addObserver(forName: hotkeyChangedNotification, object: nil, queue: .main) { [weak self] _ in
@@ -45,7 +47,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let spec = Settings.shared.hotkey, record = Settings.shared.recordHotkey
             Log.info("hotkeys changed from the command line: \(spec.spec), record \(record.spec)")
             if !self.hotKey.register(spec) { self.notify("Snip couldn't register \(spec.display); it may be taken by another app or a macOS shortcut.") }
-            if !self.recordHotKey.register(record) { self.notify("Snip couldn't register \(record.display); it may be taken by another app or a macOS shortcut.") }
+            self.recordHotkeyRegistered = self.recordHotKey.register(record)
+            if !self.recordHotkeyRegistered { self.notify("Snip couldn't register \(record.display); it may be taken by another app or a macOS shortcut.") }
         }
 
         DistributedNotificationCenter.default().addObserver(forName: captureNotification, object: nil, queue: .main) { [weak self] _ in
@@ -113,21 +116,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         otherKey.unregister()
         recorder.show(current: old) { [weak self] spec in
             guard let self else { return }
-            otherKey.register(other)
-            guard let spec, spec != old else {
-                key.register(old)
-                return
-            }
-            if spec == other {
-                key.register(old)
+            let otherOK = otherKey.register(other)
+            var ok = false
+            if let spec, spec != old, spec == other {
+                ok = key.register(old)
                 self.notify("\(spec.display) is Snip's other hotkey. Kept \(old.display).")
-            } else if key.register(spec) {
+            } else if let spec, spec != old, key.register(spec) {
+                ok = true
                 save(spec)
                 Log.info("hotkey changed to \(spec.spec)")
             } else {
-                key.register(old)
-                self.notify("\(spec.display) is already used by another app or a macOS shortcut (System Settings > Keyboard > Keyboard Shortcuts). Kept \(old.display).")
+                ok = key.register(old)
+                if let spec, spec != old {
+                    self.notify("\(spec.display) is already used by another app or a macOS shortcut (System Settings > Keyboard > Keyboard Shortcuts). Kept \(old.display).")
+                }
             }
+            self.recordHotkeyRegistered = key === self.recordHotKey ? ok : otherOK
         }
     }
 
@@ -340,7 +344,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 extension AppDelegate: NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) {
         hotkeyInfoItem.title = "Hotkey: \(Settings.shared.hotkey.display)"
-        recordHotkeyInfoItem.title = "Record hotkey: \(Settings.shared.recordHotkey.display)"
+        recordHotkeyInfoItem.title = "Record hotkey: \(Settings.shared.recordHotkey.display)" + (recordHotkeyRegistered ? "" : " (taken by another app)")
         recordItem.title = recording == nil ? "Record video" : "Stop recording"
         loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
         debugItem.state = Settings.shared.debugLogging ? .on : .off

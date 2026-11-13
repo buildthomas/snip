@@ -49,6 +49,13 @@ final class RecordSelectSession {
         Log.debug("record selection shown on \(windows.count) display(s)")
     }
 
+    /// Keys go to the display under the pointer while nothing is selected, and only one display shows a highlight.
+    func pointerMoved(to view: RecordSelectView) {
+        guard !views.contains(where: { $0.hasSelection }) else { return }
+        for v in views where v !== view { v.clearSelection() }
+        if view.window?.isKeyWindow == false { view.window?.makeKeyAndOrderFront(nil) }
+    }
+
     func selectionStarted(on view: RecordSelectView) {
         for v in views where v !== view { v.clearSelection() }
         view.window?.makeKeyAndOrderFront(nil)
@@ -107,6 +114,7 @@ final class RecordSelectView: NSView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     private var shown: CGRect? { selection ?? hover }
+    var hasSelection: Bool { selection != nil }
 
     func clearSelection() {
         let old = shown
@@ -220,6 +228,7 @@ final class RecordSelectView: NSView {
     override func mouseMoved(with event: NSEvent) {
         let p = point(event)
         guard let sel = selection else {
+            session?.pointerMoved(to: self)
             let w = windowAt(p)
             if w != hover {
                 let old = hover
@@ -274,6 +283,7 @@ final class RecordSelectView: NSView {
 
     /// ⌘A (a menu item, so App Shortcuts apply): the whole display.
     @objc func snipSelectAll(_ sender: Any?) {
+        session?.selectionStarted(on: self)
         let old = shown
         selection = bounds
         hover = nil

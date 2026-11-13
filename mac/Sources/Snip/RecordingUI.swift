@@ -357,8 +357,15 @@ final class RecordingResultWindow: NSWindow, NSWindowDelegate {
         panel.beginSheetModal(for: self) { [weak self] response in
             guard let self, response == .OK, let dest = panel.url else { return }
             do {
-                if FileManager.default.fileExists(atPath: dest.path) { try FileManager.default.removeItem(at: dest) }
-                try FileManager.default.copyItem(at: self.result.url, to: dest)
+                let fm = FileManager.default
+                if fm.fileExists(atPath: dest.path) {
+                    // Copy next to it first, so a failed copy never costs the file being replaced.
+                    let temp = dest.deletingLastPathComponent().appendingPathComponent(".snip-\(UUID().uuidString).mp4")
+                    try fm.copyItem(at: self.result.url, to: temp)
+                    do { _ = try fm.replaceItemAt(dest, withItemAt: temp) } catch { try? fm.removeItem(at: temp); throw error }
+                } else {
+                    try fm.copyItem(at: self.result.url, to: dest)
+                }
             } catch {
                 Log.error("recording save failed: \(error)")
                 self.message("Couldn't save \(dest.lastPathComponent).\n\n\(error.localizedDescription)")

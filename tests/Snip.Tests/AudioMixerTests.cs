@@ -134,4 +134,12 @@ public class AudioTimelineMicrophoneTests
         Assert.Equal((29_793L, 0), AudioTimeline.Place(29_793, 29_892, 480, discontinuity: false, arrivalFrame: 40_000, canPause: false));
         Assert.Equal(40_000 - 480, AudioTimeline.Place(29_793, 29_892, 480, discontinuity: false, arrivalFrame: 40_000, canPause: true).At);
     }
+
+    [Fact]
+    public void AMicrophoneThatLostSamplesCatchesUpInsteadOfFallingBehindForGood()
+    {
+        var ahead = 100_000 + AudioTimeline.MaxLagFrames + 1;
+        Assert.Equal((ahead, 0), AudioTimeline.Place(100_000, ahead, 480, discontinuity: false, arrivalFrame: 0, canPause: false));
+        Assert.Equal((100_000L, 0), AudioTimeline.Place(100_000, 100_000 + 2_000, 480, discontinuity: false, arrivalFrame: 0, canPause: false));
+    }
 }

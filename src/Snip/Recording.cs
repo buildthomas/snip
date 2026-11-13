@@ -213,6 +213,18 @@ internal abstract class ChromeForm : Form
         RecordingUi.ExcludeFromCapture(Handle);
     }
 
+    protected override void OnVisibleChanged(EventArgs e)
+    {
+        base.OnVisibleChanged(e);
+        if (Visible) RaiseTop();
+    }
+
+    /// Back on top of other topmost windows (a re-shown window keeps its old place), without taking focus.
+    public void RaiseTop()
+    {
+        if (IsHandleCreated) Native.SetWindowPos(Handle, new IntPtr(-1) /* TOPMOST */, 0, 0, 0, 0, 0x0013 /* NOSIZE|NOMOVE|NOACTIVATE */);
+    }
+
     protected override void WndProc(ref Message m)
     {
         if (m.Msg == Native.WM_DPICHANGED) { m.Result = IntPtr.Zero; return; }
